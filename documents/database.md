@@ -2,7 +2,7 @@
 
 Living document.  
 Started: 2026-09-05  
-Last updated: 2026-09-07 (staff table + id_counters role F)
+Last updated: 2026-09-07 (Railway Postgres URL)
 
 The backend talks **Postgres only**, through a generic driver (`postgres` / Postgres.js). Hosting is not a code concern. Neon, Supabase, RDS, or a local container are the same as long as they accept a Postgres URL.
 
@@ -57,6 +57,13 @@ Supabase (pooler):
 
 ```text
 DATABASE_URL=postgresql://postgres.PROJECT:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+Railway (reference variable on the `backend` service; see `documents/railway.md`):
+
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+DATABASE_SSL=require
 ```
 
 Copy `backend/.env.example` to `backend/.env` and replace the URL. Frontend host settings live in `frontend/.env`. There is no root `.env`.

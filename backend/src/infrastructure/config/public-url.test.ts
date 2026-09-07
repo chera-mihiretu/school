@@ -58,6 +58,20 @@ describe("loadPublicUrlParts", () => {
     assert.equal(loaded.host, "e-school.et:3000");
     assert.equal(rootHostFromAppHost("e-school.et:3000"), "e-school.et");
   });
+
+  it("does not append a public port for HTTPS", () => {
+    const loaded = loadPublicUrlParts({
+      APP_PROTOCOL: "https",
+      APP_HOST: "e-school.et",
+    });
+    assert.equal(loaded.protocol, "https");
+    assert.equal(loaded.host, "e-school.et");
+    assert.equal(
+      createPublicUrl(loaded)({ label: "admin" }),
+      "https://admin.e-school.et",
+    );
+    assert.equal(createPublicUrl(loaded)(), "https://e-school.et");
+  });
 });
 
 describe("host matching with a derived root", () => {

@@ -18,16 +18,22 @@ export function normalizeProtocol(raw: string): string {
   return trimmed.length > 0 ? trimmed : DEFAULT_PUBLIC_PROTOCOL;
 }
 
-export function normalizePublicHost(rawHost: string): string {
+export function normalizePublicHost(
+  rawHost: string,
+  protocol: string = DEFAULT_PUBLIC_PROTOCOL,
+): string {
   const trimmed = rawHost.trim().toLowerCase();
   const hostname = stripHostPort(trimmed);
   if (hostname.length === 0) {
     return DEFAULT_PUBLIC_HOST;
   }
-  if (trimmed === hostname) {
-    return `${hostname}:${DEFAULT_PUBLIC_PORT}`;
+  if (trimmed !== hostname) {
+    return trimmed;
   }
-  return trimmed;
+  if (normalizeProtocol(protocol) === "https") {
+    return hostname;
+  }
+  return `${hostname}:${DEFAULT_PUBLIC_PORT}`;
 }
 
 export function rootHostFromAppHost(rawHost: string): string {
@@ -37,15 +43,18 @@ export function rootHostFromAppHost(rawHost: string): string {
 export function loadPublicUrlParts(
   env: NodeJS.ProcessEnv = process.env,
 ): PublicUrlParts {
+  const protocol = normalizeProtocol(
+    env["APP_PROTOCOL"] ?? DEFAULT_PUBLIC_PROTOCOL,
+  );
   return {
-    protocol: normalizeProtocol(env["APP_PROTOCOL"] ?? DEFAULT_PUBLIC_PROTOCOL),
-    host: normalizePublicHost(env["APP_HOST"] ?? DEFAULT_PUBLIC_HOST),
+    protocol,
+    host: normalizePublicHost(env["APP_HOST"] ?? DEFAULT_PUBLIC_HOST, protocol),
   };
 }
 
 export function createPublicUrl(parts: PublicUrlParts): PublicUrlPort["publicUrl"] {
   const protocol = normalizeProtocol(parts.protocol);
-  const host = normalizePublicHost(parts.host);
+  const host = normalizePublicHost(parts.host, protocol);
 
   return function publicUrl(options: PublicUrlOptions = {}): string {
     const label = options.label?.trim();
