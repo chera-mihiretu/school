@@ -1,0 +1,1053 @@
+{
+  "info": {
+    "_postman_id": "a11a1006-4d7e-4b2a-9f11-6e0c1d8a4b06",
+    "name": "School API — Admin Contact Messages",
+    "description": "Platform-admin contact inbox. **Documented:** `GET /admin/contact-messages`, `POST /admin/contact-messages/:id/act`.\n\n- Both routes require Bearer `{{accessToken}}` **then** `{{adminHost}}`.\n- `requireAdminSession` runs **before** the host check — missing/invalid token is **401** `{ \"error\": \"Unauthorized\" }` even on a school host.\n- Wrong host after a valid admin token: **403** `{ \"error\": \"This action is only allowed on the admin host\" }`.\n- Public `POST /public/contact` is **201** `{ \"ok\": true }` and does **not** return an id. This list writes `{{contactMessageId}}` from the first row.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin Contact Messages",
+      "description": "Inbox for public contact-form rows. Sign in via **Admin Session** first (`{{accessToken}}`). Host must be `admin.{{rootHost}}` (`{{adminHost}}` = `admin.e-school.et:3000`).\n\nList newest **unacted** first, then newest created. `POST /public/contact` does not return an id — copy `{{contactMessageId}}` from this list. Act is idempotent and needs **no JSON body**.",
+      "item": [
+        {
+          "name": "List admin contact messages",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing, non-Bearer, expired, school/campus HMAC, or bad signature → 401 Unauthorized. Checked before the host."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip (admin.e-school.et or admin.e-school.et:3000). Checked only after a valid admin token. School / app / apex / Host fallback → 403."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/contact-messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "contact-messages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "1-based page. Omitted, non-integer, or < 1 → 1. Number(\"\") is 0 and also defaults."
+                },
+                {
+                  "key": "pageSize",
+                  "value": "50",
+                  "disabled": true,
+                  "description": "Page size. Omitted, non-integer, or < 1 → 50. Integers above 100 are capped at 100."
+                }
+              ]
+            },
+            "description": "Lists contact-form rows for the platform operator.\n\n**Auth:** required. `Authorization: Bearer {{accessToken}}`. `requireAdminSession` / `readPlatformAdminSession` runs **before** method and host checks. Missing header, non-`Bearer ` scheme, empty token, expired, or school/campus HMAC → `401 { \"error\": \"Unauthorized\" }` **even when `x-school-host` is a school host**.\n\n**Who:** the signed-in platform operator. School and campus tokens will not verify (different HMAC material).\n\n**Host (required after auth):** `rejectIfNotAdminHost` / `isPlatformAdminHost`. `x-school-host` (else `Host`) must be `admin.{{rootHost}}` after lowercase + port strip. `{{adminHost}}` = `admin.e-school.et:3000` is valid. School / app / apex / `127.0.0.1` → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Query:** `page` (default **1**), `pageSize` (default **50**, max **100**). Handler does `Number(query)`. `normalizeContactPage` / `normalizeContactPageSize`: `undefined`, non-integer (`abc`, `1.5`, `NaN`), or `< 1` (including `0` from `page=`) → defaults. `pageSize` 101 → **100**. Invalid query never 400s.\n\n**Order:** unacted (`actedAt === null`) first, then `createdAt` descending. `pending` is the unacted count across **all** rows, not the page.\n\n**Side effects:** none. Does not mark acted.\n\n**Success `200`:** `{ messages, page, pageSize, total, pending }`. Each message: `{ id, school, name, role, email, note, phone, created, acted }`. `school` is `schoolName`. `name` is `senderName`. `role` / `phone` may be `null`. `created` is ISO-8601 from `createdAt`. `acted` is `actedAt !== null`. Empty inbox is still 200 with `messages: []`, `total: 0`, `pending: 0`.\n\n**Public contact:** `POST /public/contact` returns **201** `{ \"ok\": true }` and **no id**. This request writes `{{contactMessageId}}` from `messages[0].id` when the list is non-empty.\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 405 if not GET (POST/PUT/PATCH/DELETE). 405 is reached only **after** a valid admin token.\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('list is { messages, page, pageSize, total, pending }', function () {",
+                  "    pm.expect(body).to.have.property('messages').that.is.an('array');",
+                  "    pm.expect(body.page).to.be.a('number');",
+                  "    pm.expect(body.pageSize).to.be.a('number');",
+                  "    pm.expect(body.total).to.be.a('number');",
+                  "    pm.expect(body.pending).to.be.a('number');",
+                  "    body.messages.forEach(function (message) {",
+                  "      pm.expect(message).to.have.property('id').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('school').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('name').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('email').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('note').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('created').that.is.a('string');",
+                  "      pm.expect(message).to.have.property('acted').that.is.a('boolean');",
+                  "      pm.expect(message).to.have.property('role');",
+                  "      pm.expect(message).to.have.property('phone');",
+                  "    });",
+                  "  });",
+                  "  const first = body.messages[0];",
+                  "  if (first && typeof first.id === 'string' && first.id.length > 0) {",
+                  "    pm.environment.set('contactMessageId', first.id);",
+                  "    pm.collectionVariables.set('contactMessageId', first.id);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "c11m1001-0001-4000-8000-000000000200",
+              "name": "200 Newest unacted first",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"messages\": [\n    {\n      \"id\": \"33333333-3333-4333-8333-333333333333\",\n      \"school\": \"East Yard\",\n      \"name\": \"Bereket\",\n      \"role\": null,\n      \"email\": \"bereket@east.et\",\n      \"note\": \"Second\",\n      \"phone\": null,\n      \"created\": \"2026-09-06T10:00:00.000Z\",\n      \"acted\": false\n    },\n    {\n      \"id\": \"11111111-1111-4111-8111-111111111111\",\n      \"school\": \"North Hall\",\n      \"name\": \"Ada Lemma\",\n      \"role\": \"Director\",\n      \"email\": \"ada@north-hall.edu\",\n      \"note\": \"We would like a campus.\",\n      \"phone\": null,\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"acted\": false\n    },\n    {\n      \"id\": \"44444444-4444-4444-8444-444444444444\",\n      \"school\": \"West Gate\",\n      \"name\": \"Chaltu\",\n      \"role\": null,\n      \"email\": \"chaltu@west.et\",\n      \"note\": \"Already handled\",\n      \"phone\": null,\n      \"created\": \"2026-09-07T10:00:00.000Z\",\n      \"acted\": true\n    }\n  ],\n  \"page\": 1,\n  \"pageSize\": 50,\n  \"total\": 3,\n  \"pending\": 2\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000201",
+              "name": "200 Paginated",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages?page=2&pageSize=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "2"
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"messages\": [\n    {\n      \"id\": \"11111111-1111-4111-8111-111111111111\",\n      \"school\": \"North Hall\",\n      \"name\": \"Ada Lemma\",\n      \"role\": \"Director\",\n      \"email\": \"ada@north-hall.edu\",\n      \"note\": \"We would like a campus.\",\n      \"phone\": null,\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"acted\": false\n    }\n  ],\n  \"page\": 2,\n  \"pageSize\": 1,\n  \"total\": 2,\n  \"pending\": 2\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000202",
+              "name": "200 Non-integer query uses defaults",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages?page=abc&pageSize=1.5",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "abc"
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "1.5"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"messages\": [\n    {\n      \"id\": \"33333333-3333-4333-8333-333333333333\",\n      \"school\": \"East Yard\",\n      \"name\": \"Bereket\",\n      \"role\": null,\n      \"email\": \"bereket@east.et\",\n      \"note\": \"Second\",\n      \"phone\": null,\n      \"created\": \"2026-09-06T10:00:00.000Z\",\n      \"acted\": false\n    }\n  ],\n  \"page\": 1,\n  \"pageSize\": 50,\n  \"total\": 1,\n  \"pending\": 1\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000203",
+              "name": "200 pageSize capped at 100",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages?page=1&pageSize=101",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "101"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"messages\": [],\n  \"page\": 1,\n  \"pageSize\": 100,\n  \"total\": 0,\n  \"pending\": 0\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000204",
+              "name": "200 Empty inbox",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"messages\": [],\n  \"page\": 1,\n  \"pageSize\": 50,\n  \"total\": 0,\n  \"pending\": 0\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "c11m1001-0001-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Act on contact message",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid token → 401 before host or id checks."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "contact-messages",
+                "{{contactMessageId}}",
+                "act"
+              ],
+              "variable": [
+                {
+                  "key": "contactMessageId",
+                  "value": "{{contactMessageId}}",
+                  "description": "UUID from GET /admin/contact-messages (first row). Public POST /public/contact does not return this id. Invalid or unknown UUID → 404 Message not found."
+                }
+              ]
+            },
+            "description": "Marks a contact message acted (`actedAt` set). **No JSON body.** Empty body is fine — the handler does not call `readJsonBody`.\n\n**Auth:** required. Same `requireAdminSession` gate as the list: **401 first**, then host, then method, then id. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Path:** `readAdminContactMessageAct` matches `/admin/contact-messages/:id/act` where `:id` is non-empty and contains no `/`. `/admin/contact-messages/act` and nested paths do **not** match this handler (generic `404 { \"error\": \"Not found\" }`).\n\n**Id:** `isContactMessageId` — UUID regex (any version/variant, case-insensitive). Non-UUID (`not-a-uuid`) **and** unknown UUID both → `404 { \"error\": \"Message not found\" }`. There is no 400 for a bad id.\n\n**Idempotent:** acting twice still **200** `{ message }` with `acted: true` (store returns the existing row).\n\n**Side effects:** sets `actedAt` once. Does not delete the row. Later lists keep the row but sort unacted first; `pending` decreases by one on the first act.\n\n**Success `200`:** `{ \"message\": { id, school, name, role, email, note, phone, created, acted: true } }` — same view as the list.\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 404 Message not found; 405 if not POST (GET/PUT/PATCH/DELETE). 405 only after a valid admin token.\n\n**Not used:** 400, 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('acted message is { message } with acted true', function () {",
+                  "    pm.expect(body).to.have.property('message').that.is.an('object');",
+                  "    pm.expect(body.message.id).to.be.a('string');",
+                  "    pm.expect(body.message.school).to.be.a('string');",
+                  "    pm.expect(body.message.name).to.be.a('string');",
+                  "    pm.expect(body.message.email).to.be.a('string');",
+                  "    pm.expect(body.message.note).to.be.a('string');",
+                  "    pm.expect(body.message.created).to.be.a('string');",
+                  "    pm.expect(body.message.acted).to.eql(true);",
+                  "    pm.expect(body.message).to.have.property('role');",
+                  "    pm.expect(body.message).to.have.property('phone');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('unknown or invalid id', function () {",
+                  "    pm.expect(body.error).to.eql('Message not found');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "c22a2002-0002-4000-8000-000000000200",
+              "name": "200 Acted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": {\n    \"id\": \"33333333-3333-4333-8333-333333333333\",\n    \"school\": \"East Yard\",\n    \"name\": \"Bereket\",\n    \"role\": null,\n    \"email\": \"bereket@east.et\",\n    \"note\": \"Second\",\n    \"phone\": null,\n    \"created\": \"2026-09-06T10:00:00.000Z\",\n    \"acted\": true\n  }\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000201",
+              "name": "200 Already acted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": {\n    \"id\": \"33333333-3333-4333-8333-333333333333\",\n    \"school\": \"East Yard\",\n    \"name\": \"Bereket\",\n    \"role\": null,\n    \"email\": \"bereket@east.et\",\n    \"note\": \"Second\",\n    \"phone\": null,\n    \"created\": \"2026-09-06T10:00:00.000Z\",\n    \"acted\": true\n  }\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000404",
+              "name": "404 Unknown message",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/99999999-9999-9999-9999-999999999999/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "99999999-9999-9999-9999-999999999999",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Message not found\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000414",
+              "name": "404 Invalid id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/not-a-uuid/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "not-a-uuid",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Message not found\"\n}"
+            },
+            {
+              "id": "c22a2002-0002-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/contact-messages/{{contactMessageId}}/act",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "contact-messages",
+                    "{{contactMessageId}}",
+                    "act"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

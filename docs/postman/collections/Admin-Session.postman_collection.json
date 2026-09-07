@@ -1,0 +1,777 @@
+{
+  "info": {
+    "_postman_id": "a11a1002-4d7e-4b2a-9f11-6e0c1d8a4b02",
+    "name": "School API — Admin Session",
+    "description": "Platform admin session. **Documented:** `GET|POST|DELETE /admin/session`.\n\n- `POST` requires `{{adminHost}}` (`admin.<rootHost>`).\n- `GET` requires Bearer `{{accessToken}}` (host **not** checked).\n- `DELETE` always `200 { ok: true }` (token optional; host not checked).\n- Test script on sign-in writes `{{accessToken}}`.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin Session",
+      "description": "Platform-operator session on `admin.<rootHost>` only. Identity is `platform.admins`, not a tenant.\n\nSign-in is the only method that enforces the admin host. GET validates the HMAC Bearer token and does **not** re-check host. DELETE always returns 200 and does not read the token.",
+      "item": [
+        {
+          "name": "Read platform admin session",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC session token from POST /admin/session. Missing, non-Bearer, expired, or bad signature → 401."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Sent by the Next console. **Not validated** on GET — only the Bearer token matters."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "session"
+              ]
+            },
+            "description": "Returns the current platform-admin identity if the Bearer token is valid.\n\n**Auth:** required. `Authorization: Bearer {{accessToken}}`. `readBearerToken` only accepts a header that starts with `Bearer `.\n\n**Who:** the signed-in platform operator. School directors, campus users, and guests cannot obtain this token from school-account routes.\n\n**Host:** `x-school-host` is **not** checked (unlike POST). A valid token works even if the header is a school host.\n\n**Side effects:** none. Does not rotate or extend the token.\n\n**Success body:** `{ email, expiresAt }` — **no `token` field** (unlike sign-in).\n\n**Errors that exist:** `401 { \"error\": \"Unauthorized\" }` when the token is missing, empty, expired, or invalid. `405` for PUT/PATCH/etc.\n\n**Not used:** 400, 403, 404 (path exists), 409, 422."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unauthenticated is 401 with error string', function () {",
+                  "  if (pm.response.code !== 401) { return; }",
+                  "  pm.expect(pm.response.json().error).to.eql('Unauthorized');",
+                  "});",
+                  "pm.test('success is 200 with email and expiresAt only', function () {",
+                  "  if (pm.response.code !== 200) { return; }",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('email').that.is.a('string');",
+                  "  pm.expect(body).to.have.property('expiresAt').that.is.a('string');",
+                  "  pm.expect(body).to.not.have.property('token');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "b22c2002-0002-4000-8000-000000000200",
+              "name": "200 Current session",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"email\": \"platform.admin@e-school.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\"\n}"
+            },
+            {
+              "id": "b22c2002-0002-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "b22c2002-0002-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "b22c2002-0002-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Sign in platform admin",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body. Invalid JSON → 400. Empty body parses as `{}` and becomes 401 (empty credentials)."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must resolve to `admin.<rootHost>` after port strip. School / app / apex hosts → 403."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "session"
+              ]
+            },
+            "description": "Issues an HMAC platform-admin session when credentials match `platform.admins` **and** the request is on the admin host.\n\n**Auth:** none on the request. Email is trimmed and lowercased (`normalizeAdminEmail`). Non-string or missing `email` / `password` become `\"\"` — there is **no field-level 400**. Bad or empty credentials → `401 { \"error\": \"Invalid email or password\" }` (same message; no email-format or password-complexity errors on this route). Bootstrap password rules apply only to the seed, not this handler.\n\n**Who:** the seeded platform operator only. School accounts cannot sign in here.\n\n**Host (required):** `isPlatformAdminHost` — `x-school-host` or `Host` must be `admin.{{rootHost}}` (e.g. `admin.e-school.et` or `admin.e-school.et:3000`). Otherwise `403 { \"error\": \"Admin login is only allowed on the admin host\" }`.\n\n**Side effects:** issues a new HMAC token (`SESSION_TTL_SECONDS`, default 28800). Does not persist a server-side session row; the token is the session. Does not set cookies (the Next console stores the token in a host-only cookie after this call).\n\n**Success `200`:** `{ email, token, expiresAt }` (`expiresAt` is ISO-8601). Copy `token` into `{{accessToken}}` (the test script does this).\n\n**Errors that exist:** 400 invalid JSON; 401 bad/empty credentials; 403 wrong host; 405 other methods.\n\n**Not used:** 404, 409, 422, and no distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('sign-in returns email, token, expiresAt', function () {",
+                  "    pm.expect(body.email).to.be.a('string');",
+                  "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.expiresAt).to.be.a('string');",
+                  "  });",
+                  "  pm.environment.set('accessToken', body.token);",
+                  "  pm.collectionVariables.set('accessToken', body.token);",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON error', function () {",
+                  "    pm.expect(body.error).to.eql('Invalid JSON');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('bad credentials error', function () {",
+                  "    pm.expect(body.error).to.eql('Invalid email or password');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('Admin login is only allowed on the admin host');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "c33c3003-0003-4000-8000-000000000200",
+              "name": "200 Signed in",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"email\": \"platform.admin@e-school.et\",\n  \"token\": \"eyJlbWFpbCI6InBsYXRmb3JtLmFkbWluQGUtc2Nob29sLmV0IiwiZXhwIjoxNzg4ODAwMDAwfQ.hmac-signature\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ email: platform.admin@e-school.et, password: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000401",
+              "name": "401 Invalid email or password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"platform.admin@e-school.et\",\n  \"password\": \"wrongPassword9\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000402",
+              "name": "401 Missing credentials (empty strings)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Admin login is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000413",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Admin login is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "c33c3003-0003-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Sign out platform admin",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "The Next console sends this. The backend **ignores** it and does not revoke the HMAC token."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Sent by the Next console. **Not validated** on DELETE."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "session"
+              ]
+            },
+            "description": "Client-side sign-out acknowledgement.\n\n**Auth:** not required. The handler does **not** call `readPlatformAdminSession`. Missing or invalid tokens still return 200.\n\n**Who:** the Next admin console calls this to drop its host-only cookie. Anyone who can reach the backend can call it; it is a no-op on the server.\n\n**Host:** not checked (unlike school-account DELETE, which can return 403 on the wrong host).\n\n**Side effects:** **none on the server.** HMAC tokens stay valid until `expiresAt`. The client must discard `{{accessToken}}` / the cookie. There is no deny-list.\n\n**Success:** always `200 { \"ok\": true }` for DELETE.\n\n**Errors that exist:** `405` for methods other than GET/POST/DELETE.\n\n**Not used:** 400, 401, 403, 404, 409, 422."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sign-out is 200 { ok: true }', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "  pm.expect(pm.response.json()).to.eql({ ok: true });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "d44c4004-0004-4000-8000-000000000200",
+              "name": "200 Signed out (token sent)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "d44c4004-0004-4000-8000-000000000201",
+              "name": "200 Signed out (no token — still succeeds)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "d44c4004-0004-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

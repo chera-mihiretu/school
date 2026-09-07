@@ -1,0 +1,156 @@
+{
+  "info": {
+    "_postman_id": "a11a1001-4d7e-4b2a-9f11-6e0c1d8a4b01",
+    "name": "School API — Health",
+    "description": "Liveness and database ping. **Documented:** `GET /health`.\n\nNo authentication. No host check. Wrong method on `/health` is **404** (health is matched only as GET), not 405.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness and database ping. No authentication. `service` is `SERVICE_TAG` or `backend-service`.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-request-id",
+                "value": "health-check-local",
+                "description": "Optional. Echoed on the response. Generated as a UUID when omitted.",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Returns process liveness plus a Postgres ping.\n\n**Auth:** none. Anyone can call this (compose, CI, load balancers).\n\n**Host:** ignored. No `x-school-host` required.\n\n**Side effects:** none (read-only `database.ping()`).\n\n**Status:** `200` when ping succeeds (`database: \"up\"`); `503` when ping throws (`database: \"down\"`). Both bodies share `{ ok, service, database }`.\n\n**Not used:** 400, 401, 403, 409, 422. Non-GET to this path is **not** 405 — the router only matches `GET /health`, so `POST /health` falls through to `404 { \"error\": \"Not found\" }`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 healthy or 503 unhealthy', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                  "});",
+                  "pm.test('health payload shape', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('ok').that.is.a('boolean');",
+                  "  pm.expect(body).to.have.property('service').that.is.a('string');",
+                  "  pm.expect(body.database).to.be.oneOf(['up', 'down']);",
+                  "  pm.expect(body.ok).to.eql(body.database === 'up');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "a11c1001-0001-4000-8000-000000000201",
+              "name": "200 Healthy (database up)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                },
+                {
+                  "key": "x-request-id",
+                  "value": "00000000-0000-4000-8000-000000000001"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true,\n  \"service\": \"backend-service\",\n  \"database\": \"up\"\n}"
+            },
+            {
+              "id": "a11c1001-0001-4000-8000-000000000503",
+              "name": "503 Unhealthy (database down)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "status": "Service Unavailable",
+              "code": 503,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": false,\n  \"service\": \"backend-service\",\n  \"database\": \"down\"\n}"
+            },
+            {
+              "id": "a11c1001-0001-4000-8000-000000000404",
+              "name": "404 Not found (non-GET)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "health"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

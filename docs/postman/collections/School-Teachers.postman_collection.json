@@ -1,0 +1,3774 @@
+{
+  "info": {
+    "_postman_id": "a11a1009-4d7e-4b2a-9f11-6e0c1d8a4b09",
+    "name": "School API — School Teachers",
+    "description": "Campus director teacher roster + teacher first-login password. **Documented:** `GET|POST /school-teachers`, `POST /school-teachers/password`, `POST /school-teachers/:id/resend-credentials`.\n\n- Host: `{{schoolHost}}`. App / admin / apex → 403 `Campus login is only allowed on that school's host` (not the app-host 403 text).\n- **Host is checked before the token** (unlike `/admin/*`). Missing token on the app host is 403, not 401.\n- List / create / resend: director `{{campusAccessToken}}`. Teacher-kind token → 403 `Only the school director can manage teachers`.\n- Password: teacher `{{teacherAccessToken}}` from campus sign-in with `{{teacherEmail}}` / `{{teacherPassword}}`. Director token → 403 `Only a teacher can change this password`.\n- Inactive / suspended / pending_setup → 403 `This school account is not active` (not `This school account is suspended`).\n- Create 409 and tenant-invite 409 share `This email cannot be used.`. Resend 409 is `Credentials cannot be resent after the password is changed`.\n- `GET /admin/dashboard` is not this collection.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "School Teachers",
+      "description": "Teacher roster on `{slug}.{{rootHost}}` (`{{schoolHost}}`). Sign in the director via **Campus Session** first (`{{campusAccessToken}}`). Create writes `{{teacherId}}` / `{{teacherEmail}}` / `{{teacherPassword}}`. Then **Campus Session → Sign in campus account** with the teacher email writes a teacher-kind token — copy it to `{{teacherAccessToken}}` (do not overwrite the director `{{campusAccessToken}}`).\n\n**This collection:** list newest-first, create + email temp password, teacher first-login password change, resend credentials while `mustChangePassword` is true.\n\n`GET /admin/dashboard` is not documented here.",
+      "item": [
+        {
+          "name": "List school teachers",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{campusAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{campusAccessToken}}",
+                "description": "HMAC campus session from POST `/school-accounts/campus-session` as the **director** (`kind: \"director\"`). Same HMAC family as `{{schoolAccessToken}}` (`:school-account-session`). Admin `{{accessToken}}` will not verify (401). Teacher-kind `{{teacherAccessToken}}` → 403 director-only. Missing / empty / invalid / expired → 401 on a campus host. Host is checked first: missing token on the **app** host is 403, not 401."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{schoolHost}}",
+                "description": "**Required campus host.** `{slug}.{{rootHost}}` after port strip (e.g. `north-ridge.e-school.et:3000`). `rejectIfNotCampusHost` runs **before** the token. App / admin / apex / reserved labels (`www` `api` `app` `admin` `mail` `ftp`) / empty Host → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`. **Not** the app-host 403 text (`School accounts are only allowed on the app host`)."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-teachers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-teachers"
+              ]
+            },
+            "description": "Lists teachers on **this campus** newest-first for the signed-in **director**.\n\n**Auth:** required. `Authorization: Bearer {{campusAccessToken}}` from `POST /school-accounts/campus-session` (`kind: \"director\"`). `authorizeCampusDirector` → `authorizeCampusSession`. `readBearerToken` only accepts a header that starts with `Bearer `.\n\n**Host first (unlike admin routes):** `rejectIfNotCampusHost` runs **before** the token. App / admin / apex / reserved / empty → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`. A campus-shaped host whose slug is not in the directory is **401** after a token is present (or 401 if the token is missing — host already passed). A **valid** other-school campus host with this director token is **401** (`accountId !== tenant.id`), not 403.\n\n**Who:** the campus director. `kind: \"teacher\"` → `403 { \"error\": \"Only the school director can manage teachers\" }`. Legacy campus cookies without `kind` are treated as the director. Platform admin HMAC → 401. A still-valid `{{schoolAccessToken}}` with the same `accountId` as the tenant also verifies (same `:school-account-session` material) — prefer `{{campusAccessToken}}`.\n\n**Tenant must be `active`.** `pending_setup` and `suspended` → `403 { \"error\": \"This school account is not active\" }` (not `This school account is suspended`).\n\n**Side effects:** `teachers.ensureSchema(slug)` then `listNewestFirst`. Empty roster is still **200** `{ \"teachers\": [] }`.\n\n**Success `200`:** `{ teachers }` — each row is the teacher admin view: `{ id, givenName, fatherName, grandfatherName, displayName, sex, phone, email, employeeId, mustChangePassword, lastMailAt, lastMailOk, lastMailError, signedInAt, createdAt }`. `displayName` is `givenName fatherName grandfatherName`. `phone` is E.164 (`+251…`). `employeeId` / mail / `signedInAt` may be `null`. ISO-8601 for dates. Newest `createdAt` first. Test script writes `{{teacherId}}` / `{{teacherEmail}}` from `teachers[0]` when present.\n\n**Same path as POST create.** `405` is PUT/PATCH/DELETE only. A POST without a body is **create**, not 405. Trailing slash `/school-teachers/` does not match — generic `404 { \"error\": \"Not found\" }`.\n\n**Errors that exist:** 401 Unauthorized; 403 campus-host / director-only / inactive; 405 other methods; 404 only for a non-matching path (trailing slash).\n\n**Not used:** 400, 409, 422. No distinct 500 from this handler. `GET /admin/dashboard` is not this collection."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('teacher list is { teachers }', function () {",
+                  "    pm.expect(body).to.have.property('teachers').that.is.an('array');",
+                  "    body.teachers.forEach(function (teacher) {",
+                  "      pm.expect(teacher).to.have.property('id').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('givenName').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('fatherName').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('grandfatherName').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('displayName').that.is.a('string');",
+                  "      pm.expect(teacher.sex).to.be.oneOf(['male', 'female']);",
+                  "      pm.expect(teacher).to.have.property('phone').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('email').that.is.a('string');",
+                  "      pm.expect(teacher).to.have.property('employeeId');",
+                  "      pm.expect(teacher.mustChangePassword).to.be.a('boolean');",
+                  "      pm.expect(teacher).to.have.property('lastMailAt');",
+                  "      pm.expect(teacher).to.have.property('lastMailOk');",
+                  "      pm.expect(teacher).to.have.property('lastMailError');",
+                  "      pm.expect(teacher).to.have.property('signedInAt');",
+                  "      pm.expect(teacher).to.have.property('createdAt').that.is.a('string');",
+                  "    });",
+                  "  });",
+                  "  const first = body.teachers[0];",
+                  "  if (first && typeof first.id === 'string' && first.id.length > 0) {",
+                  "    pm.environment.set('teacherId', first.id);",
+                  "    pm.collectionVariables.set('teacherId', first.id);",
+                  "  }",
+                  "  if (first && typeof first.email === 'string' && first.email.length > 0) {",
+                  "    pm.environment.set('teacherEmail', first.email);",
+                  "    pm.collectionVariables.set('teacherEmail', first.email);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('campus host, director-only, or inactive', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Campus login is only allowed on that school's host',",
+                  "      'Only the school director can manage teachers',",
+                  "      'This school account is not active'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('non-matching path is generic Not found', function () {",
+                  "    pm.expect(body.error).to.eql('Not found');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "st11l1001-0001-4000-8000-000000000200",
+              "name": "200 Newest first",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teachers\": [\n    {\n      \"id\": \"55555555-5555-4555-8555-555555555556\",\n      \"givenName\": \"Almaz\",\n      \"fatherName\": \"Bekele\",\n      \"grandfatherName\": \"Tesfaye\",\n      \"displayName\": \"Almaz Bekele Tesfaye\",\n      \"sex\": \"female\",\n      \"phone\": \"+251712345678\",\n      \"email\": \"almaz@north-hall.et\",\n      \"employeeId\": \"T-12\",\n      \"mustChangePassword\": true,\n      \"lastMailAt\": \"2026-09-07T13:46:00.000Z\",\n      \"lastMailOk\": true,\n      \"lastMailError\": null,\n      \"signedInAt\": null,\n      \"createdAt\": \"2026-09-07T13:46:00.000Z\"\n    },\n    {\n      \"id\": \"55555555-5555-4555-8555-555555555555\",\n      \"givenName\": \"Abebe\",\n      \"fatherName\": \"Bekele\",\n      \"grandfatherName\": \"Tesfaye\",\n      \"displayName\": \"Abebe Bekele Tesfaye\",\n      \"sex\": \"male\",\n      \"phone\": \"+251912345678\",\n      \"email\": \"abebe@north-hall.et\",\n      \"employeeId\": null,\n      \"mustChangePassword\": true,\n      \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n      \"lastMailOk\": true,\n      \"lastMailError\": null,\n      \"signedInAt\": null,\n      \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000201",
+              "name": "200 Empty roster",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teachers\": []\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000411",
+              "name": "401 Admin or invalid HMAC",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000421",
+              "name": "401 Unknown campus slug",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "missing-school.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000431",
+              "name": "401 Other school's campus host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "other-hall.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000403",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000413",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000423",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000433",
+              "name": "403 Reserved www host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "www.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000443",
+              "name": "403 School not active",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is not active\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000453",
+              "name": "403 Teacher session cannot list",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Only the school director can manage teachers\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000404",
+              "name": "404 Trailing slash (generic)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    ""
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "st11l1001-0001-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create teacher",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{campusAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{campusAccessToken}}",
+                "description": "HMAC campus session from POST `/school-accounts/campus-session` as the **director** (`kind: \"director\"`). Same HMAC family as `{{schoolAccessToken}}` (`:school-account-session`). Admin `{{accessToken}}` will not verify (401). Teacher-kind `{{teacherAccessToken}}` → 403 director-only. Missing / empty / invalid / expired → 401 on a campus host. Host is checked first: missing token on the **app** host is 403, not 401."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{schoolHost}}",
+                "description": "**Required campus host.** `{slug}.{{rootHost}}` after port strip (e.g. `north-ridge.e-school.et:3000`). `rejectIfNotCampusHost` runs **before** the token. App / admin / apex / reserved labels (`www` `api` `app` `admin` `mail` `ftp`) / empty Host → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`. **Not** the app-host 403 text (`School accounts are only allowed on the app host`)."
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body { givenName, fatherName, grandfatherName, sex, phone, email, employeeId? }. Invalid JSON → 400 Invalid JSON. Missing fields become \"\"."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-teachers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-teachers"
+              ]
+            },
+            "description": "Creates a teacher on **this campus** and emails a temporary password.\n\n**Auth / host / who:** same as GET list — campus director, host first. Teacher session → `403 { \"error\": \"Only the school director can manage teachers\" }`. Inactive school → `403 { \"error\": \"This school account is not active\" }`.\n\n**Body:** `{ givenName, fatherName, grandfatherName, sex, phone, email, employeeId? }`. Non-string or missing keys become `\"\"` (not 400-for-missing-key). Non-object JSON (`[]`, `\"x\"`) is treated as `{}`. Empty body / `{}` is valid JSON then fails **Given name is required**. `employeeId` omitted or blank after trim → `null` (optional).\n\n**Validate in this order** (first failure wins):\n- `givenName` / `fatherName` / `grandfatherName` — trim + collapse spaces. Empty → `{Label} is required`. Over **80** → `{Label} is too long`. Labels: `Given name`, `Father name`, `Grandfather name`.\n- `sex` — exactly `male` or `female` (case-sensitive; `Male` fails) → `Sex must be male or female`.\n- `phone` — trim empty → `Phone is required`. Else Ethiopian mobile (`09…`/`07…` 10-digit, `9…`/`7…` 9-digit, or `+2519…`/`+2517…`) or `A valid Ethiopian mobile number is required`. Stored as `+251…`. Landlines (`011…`) fail.\n- `email` — trim + lowercase. Empty → `Email is required`. Must match `[^\\s@]+@[^\\s@]+\\.[^\\s@]+` or `A valid email is required`.\n- `employeeId` — trim; over **64** → `Employee id is too long`.\n\n**409 always the same text:** `{ \"error\": \"This email cannot be used.\" }` for the platform-admin email (case-insensitive), the director tenant email, an existing teacher email on this slug, or an insert race. The body never says which. No mail is sent on 409.\n\n**Side effects:** generates a temp password, inserts the teacher (`mustChangePassword` true), emails campus login credentials (`http://{slug}.{rootHost}:3000/login?email=…`). Mailer failure still **201** — `emailSent: false` and `emailError` are set; `teacher.lastMailOk` / `lastMailError` record the attempt.\n\n**Success `201`:** `{ teacher, credentials: { email, password, loginUrl }, emailSent, emailError? }`. `teacher` is the admin view. `loginUrl` is **not** `firstLoginUrl`. Test script writes `{{teacherId}}`, `{{teacherEmail}}`, and `{{teacherPassword}}` from the body.\n\n**Same path as GET.** `405` is PUT/PATCH/DELETE only.\n\n**Errors that exist:** 400 Invalid JSON / field validation; 401 Unauthorized; 403 campus-host / director-only / inactive; 409 email cannot be used; 405 other methods.\n\n**Not used:** 404 (path exists), 422. No distinct 500 from this handler.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 201) {",
+                  "  pm.test('created teacher is { teacher, credentials, emailSent }', function () {",
+                  "    pm.expect(body).to.have.property('teacher').that.is.an('object');",
+                  "    pm.expect(body.teacher.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.teacher.displayName).to.be.a('string');",
+                  "    pm.expect(body.teacher.sex).to.be.oneOf(['male', 'female']);",
+                  "    pm.expect(body.teacher.phone).to.be.a('string');",
+                  "    pm.expect(body.teacher.email).to.be.a('string');",
+                  "    pm.expect(body.teacher.mustChangePassword).to.eql(true);",
+                  "    pm.expect(body.credentials).to.be.an('object');",
+                  "    pm.expect(body.credentials.email).to.be.a('string');",
+                  "    pm.expect(body.credentials.password).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.credentials.loginUrl).to.be.a('string');",
+                  "    pm.expect(body.credentials).to.not.have.property('firstLoginUrl');",
+                  "    pm.expect(body.emailSent).to.be.a('boolean');",
+                  "  });",
+                  "  if (typeof body.teacher.id === 'string' && body.teacher.id.length > 0) {",
+                  "    pm.environment.set('teacherId', body.teacher.id);",
+                  "    pm.collectionVariables.set('teacherId', body.teacher.id);",
+                  "  }",
+                  "  if (typeof body.teacher.email === 'string' && body.teacher.email.length > 0) {",
+                  "    pm.environment.set('teacherEmail', body.teacher.email);",
+                  "    pm.collectionVariables.set('teacherEmail', body.teacher.email);",
+                  "  }",
+                  "  if (body.credentials && typeof body.credentials.password === 'string') {",
+                  "    pm.environment.set('teacherPassword', body.credentials.password);",
+                  "    pm.collectionVariables.set('teacherPassword', body.credentials.password);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON or field validation', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Invalid JSON',",
+                  "      'Given name is required',",
+                  "      'Given name is too long',",
+                  "      'Father name is required',",
+                  "      'Father name is too long',",
+                  "      'Grandfather name is required',",
+                  "      'Grandfather name is too long',",
+                  "      'Sex must be male or female',",
+                  "      'Phone is required',",
+                  "      'A valid Ethiopian mobile number is required',",
+                  "      'Email is required',",
+                  "      'A valid email is required',",
+                  "      'Employee id is too long'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('campus host, director-only, or inactive', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Campus login is only allowed on that school's host',",
+                  "      'Only the school director can manage teachers',",
+                  "      'This school account is not active'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('email cannot be used (generic)', function () {",
+                  "    pm.expect(body.error).to.eql('This email cannot be used.');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "st22c2002-0002-4000-8000-000000000201",
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555555\",\n    \"givenName\": \"Abebe\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Abebe Bekele Tesfaye\",\n    \"sex\": \"male\",\n    \"phone\": \"+251912345678\",\n    \"email\": \"abebe@north-hall.et\",\n    \"employeeId\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null,\n    \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n  },\n  \"credentials\": {\n    \"email\": \"abebe@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"loginUrl\": \"http://north-ridge.e-school.et:3000/login?email=abebe%40north-hall.et\"\n  },\n  \"emailSent\": true\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000211",
+              "name": "201 Created with employeeId",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"almaz@north-hall.et\",\n  \"employeeId\": \"T-12\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555556\",\n    \"givenName\": \"Almaz\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Almaz Bekele Tesfaye\",\n    \"sex\": \"female\",\n    \"phone\": \"+251712345678\",\n    \"email\": \"almaz@north-hall.et\",\n    \"employeeId\": \"T-12\",\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:46:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null,\n    \"createdAt\": \"2026-09-07T13:46:00.000Z\"\n  },\n  \"credentials\": {\n    \"email\": \"almaz@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"loginUrl\": \"http://north-ridge.e-school.et:3000/login?email=almaz%40north-hall.et\"\n  },\n  \"emailSent\": true\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000221",
+              "name": "201 Created but credentials email failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555555\",\n    \"givenName\": \"Abebe\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Abebe Bekele Tesfaye\",\n    \"sex\": \"male\",\n    \"phone\": \"+251912345678\",\n    \"email\": \"abebe@north-hall.et\",\n    \"employeeId\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": false,\n    \"lastMailError\": \"SMTP refused the message\",\n    \"signedInAt\": null,\n    \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n  },\n  \"credentials\": {\n    \"email\": \"abebe@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"loginUrl\": \"http://north-ridge.e-school.et:3000/login?email=abebe%40north-hall.et\"\n  },\n  \"emailSent\": false,\n  \"emailError\": \"SMTP refused the message\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ givenName: Abebe, email: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000410",
+              "name": "400 Given name required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"   \",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Given name is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000411",
+              "name": "400 Father name required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Father name is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000412",
+              "name": "400 Grandfather name required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Grandfather name is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000413",
+              "name": "400 Given name too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Given name is too long\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000414",
+              "name": "400 Sex must be male or female",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"other\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Sex must be male or female\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000415",
+              "name": "400 Sex is case-sensitive (Male)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"Male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Sex must be male or female\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000416",
+              "name": "400 Missing fields become empty (given name)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Given name is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000417",
+              "name": "400 Phone required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"   \",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Phone is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000418",
+              "name": "400 Invalid Ethiopian mobile (landline)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0111234567\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"A valid Ethiopian mobile number is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000419",
+              "name": "400 Email required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Email is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-00000000041a",
+              "name": "400 Invalid email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"not-an-email\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"A valid email is required\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-00000000041b",
+              "name": "400 Employee id too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\",\n  \"employeeId\": \"EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Employee id is too long\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000411b",
+              "name": "401 Admin or invalid HMAC",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000403",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000413b",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000423",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000443",
+              "name": "403 School not active",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is not active\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000453",
+              "name": "403 Teacher session cannot create",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Only the school director can manage teachers\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000409",
+              "name": "409 Duplicate teacher email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This email cannot be used.\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000419b",
+              "name": "409 Director email cannot be used",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This email cannot be used.\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000429",
+              "name": "409 Platform admin email cannot be used",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"{{adminEmail}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This email cannot be used.\"\n}"
+            },
+            {
+              "id": "st22c2002-0002-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"givenName\": \"Abebe\",\n  \"fatherName\": \"Bekele\",\n  \"grandfatherName\": \"Tesfaye\",\n  \"sex\": \"male\",\n  \"phone\": \"0912345678\",\n  \"email\": \"abebe@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Change teacher password",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{teacherAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{teacherAccessToken}}",
+                "description": "HMAC campus session from POST `/school-accounts/campus-session` as the **teacher** (`kind: \"teacher\"`). Sign in with `{{teacherEmail}}` / `{{teacherPassword}}` (temp password from create/resend). Director `{{campusAccessToken}}` → 403 teacher-only. Admin `{{accessToken}}` → 401. Host is checked first."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{schoolHost}}",
+                "description": "**Required campus host.** `{slug}.{{rootHost}}` after port strip (e.g. `north-ridge.e-school.et:3000`). `rejectIfNotCampusHost` runs **before** the token. App / admin / apex / reserved labels (`www` `api` `app` `admin` `mail` `ftp`) / empty Host → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`. **Not** the app-host 403 text (`School accounts are only allowed on the app host`)."
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body { password }. Not currentPassword/newPassword. Invalid JSON → 400 Invalid JSON. Missing field becomes \"\"."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-teachers/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-teachers",
+                "password"
+              ]
+            },
+            "description": "First-login password change for a **teacher** on the campus host. Directors cannot use this path.\n\n**Auth:** required. `Authorization: Bearer {{teacherAccessToken}}` from `POST /school-accounts/campus-session` with the teacher email / temp password (`kind: \"teacher\"`). `authorizeCampusTeacher`.\n\n**Host first:** same campus-host rule as list/create. App / admin / apex → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`.\n\n**Who:** a teacher whose `mustChangePassword` is still true. Director `{campusAccessToken}` → `403 { \"error\": \"Only a teacher can change this password\" }`. Teacher id missing from the tenant schema → 401 Unauthorized. Inactive school → `403 { \"error\": \"This school account is not active\" }`.\n\n**Body:** `{ password }` only — **not** `currentPassword` / `newPassword`. Non-string or missing → `\"\"`. Empty body `{}` is valid JSON then fails length (if still in first-login).\n\n**Order after auth:** `mustChangePassword === false` is checked **before** password rules → `409 { \"error\": \"Password has already been changed\" }` even if `password` is short. Then length **12** → `Password must be at least 12 characters`. Then hasher.verify against the current hash → `New password must be different from the current password`. `updatePassword` miss → 401 Unauthorized.\n\n**Side effects:** hashes the new password and sets `mustChangePassword` false. Does **not** rotate the session token.\n\n**Success `200`:** `{ teacher }` — admin view with `mustChangePassword: false`. No `token` / `credentials` field.\n\n**After success, resend-credentials for this id is 409.** Sign in again via **Campus Session** with the new password to refresh `{{teacherAccessToken}}` if needed.\n\n**Errors that exist:** 400 Invalid JSON / length / same-as-current; 401 Unauthorized; 403 campus-host / teacher-only / inactive; 409 already changed; 405 GET/PUT/PATCH/DELETE.\n\n**Not used:** 404 (path exists), 422. No distinct 500 from this handler.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('changed password is { teacher }', function () {",
+                  "    pm.expect(body).to.have.property('teacher').that.is.an('object');",
+                  "    pm.expect(body.teacher.id).to.be.a('string');",
+                  "    pm.expect(body.teacher.mustChangePassword).to.eql(false);",
+                  "    pm.expect(body).to.not.have.property('token');",
+                  "    pm.expect(body).to.not.have.property('credentials');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON or password rule', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Invalid JSON',",
+                  "      'Password must be at least 12 characters',",
+                  "      'New password must be different from the current password'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('campus host, teacher-only, or inactive', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Campus login is only allowed on that school's host',",
+                  "      'Only a teacher can change this password',",
+                  "      'This school account is not active'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('password already changed', function () {",
+                  "    pm.expect(body.error).to.eql('Password has already been changed');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "st33p3003-0003-4000-8000-000000000200",
+              "name": "200 Password changed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555555\",\n    \"givenName\": \"Abebe\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Abebe Bekele Tesfaye\",\n    \"sex\": \"male\",\n    \"phone\": \"+251912345678\",\n    \"email\": \"abebe@north-hall.et\",\n    \"employeeId\": null,\n    \"mustChangePassword\": false,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": \"2026-09-07T14:00:00.000Z\",\n    \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n  }\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ password: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000410",
+              "name": "400 Password too short",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"short\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Password must be at least 12 characters\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000411",
+              "name": "400 Missing password becomes empty",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Password must be at least 12 characters\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000412",
+              "name": "400 Same as current password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"temp-password-16x\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"New password must be different from the current password\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000411b",
+              "name": "401 Admin or invalid HMAC",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000403",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000413",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000423",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000443",
+              "name": "403 School not active",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is not active\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000453",
+              "name": "403 Director cannot change teacher password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Only a teacher can change this password\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000409",
+              "name": "409 Password already changed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"password\": \"another-kept-1\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Password has already been changed\"\n}"
+            },
+            {
+              "id": "st33p3003-0003-4000-8000-000000000405",
+              "name": "405 Method not allowed (GET)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Resend teacher credentials",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{campusAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{campusAccessToken}}",
+                "description": "HMAC campus session from POST `/school-accounts/campus-session` as the **director** (`kind: \"director\"`). Same HMAC family as `{{schoolAccessToken}}` (`:school-account-session`). Admin `{{accessToken}}` will not verify (401). Teacher-kind `{{teacherAccessToken}}` → 403 director-only. Missing / empty / invalid / expired → 401 on a campus host. Host is checked first: missing token on the **app** host is 403, not 401."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{schoolHost}}",
+                "description": "**Required campus host.** `{slug}.{{rootHost}}` after port strip (e.g. `north-ridge.e-school.et:3000`). `rejectIfNotCampusHost` runs **before** the token. App / admin / apex / reserved labels (`www` `api` `app` `admin` `mail` `ftp`) / empty Host → `403 { \"error\": \"Campus login is only allowed on that school's host\" }`. **Not** the app-host 403 text (`School accounts are only allowed on the app host`)."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-teachers",
+                "{{teacherId}}",
+                "resend-credentials"
+              ],
+              "variable": [
+                {
+                  "key": "teacherId",
+                  "value": "{{teacherId}}",
+                  "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                }
+              ]
+            },
+            "description": "Resets the temp password and re-emails campus login credentials **only while** `mustChangePassword` is true.\n\n**Auth / host / who:** same as GET list / POST create — campus director, host first. Teacher session → `403 { \"error\": \"Only the school director can manage teachers\" }`.\n\n**No body.** The handler does not call `readJsonBody`. There is no `400 Invalid JSON` on this path.\n\n**Id:** `readSchoolTeacherResend` — `/school-teachers/{id}/resend-credentials`. `id` must be a non-empty segment with no `/`. Empty id or extra path does **not** match → generic `404 { \"error\": \"Not found\" }` (catch-all). Matched then `isTeacherId` (UUID, any version, case-insensitive) fails or `findAuthById` misses → `404 { \"error\": \"Teacher not found\" }`. No 400 for a bad id. `GET /school-teachers/{id}` (no suffix) is also generic 404.\n\n**409 after first-login completes:** `{ \"error\": \"Credentials cannot be resent after the password is changed\" }`. This is **not** `Password has already been changed` (that string is only POST `/school-teachers/password`).\n\n**Side effects:** generates a new temp password, keeps `mustChangePassword` true, emails the same campus `loginUrl` shape as create. Mailer failure still **200** with `emailSent: false` and `emailError`. Test script writes `{{teacherPassword}}` from `credentials.password` on 200.\n\n**Success `200`:** `{ teacher, credentials: { email, password, loginUrl }, emailSent, emailError? }`.\n\n**`/school-teachers/password` is checked first.** `POST /school-teachers/password/resend-credentials` matches this handler with `id=password` → 404 Teacher not found (after auth).\n\n**Errors that exist:** 401 Unauthorized; 403 campus-host / director-only / inactive; 404 Teacher not found / generic Not found; 409 resend locked; 405 GET/PUT/PATCH/DELETE.\n\n**Not used:** 400, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('resent credentials are { teacher, credentials, emailSent }', function () {",
+                  "    pm.expect(body).to.have.property('teacher').that.is.an('object');",
+                  "    pm.expect(body.teacher.id).to.be.a('string');",
+                  "    pm.expect(body.teacher.mustChangePassword).to.eql(true);",
+                  "    pm.expect(body.credentials).to.be.an('object');",
+                  "    pm.expect(body.credentials.email).to.be.a('string');",
+                  "    pm.expect(body.credentials.password).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.credentials.loginUrl).to.be.a('string');",
+                  "    pm.expect(body.emailSent).to.be.a('boolean');",
+                  "  });",
+                  "  if (body.credentials && typeof body.credentials.password === 'string') {",
+                  "    pm.environment.set('teacherPassword', body.credentials.password);",
+                  "    pm.collectionVariables.set('teacherPassword', body.credentials.password);",
+                  "  }",
+                  "  if (typeof body.teacher.id === 'string' && body.teacher.id.length > 0) {",
+                  "    pm.environment.set('teacherId', body.teacher.id);",
+                  "    pm.collectionVariables.set('teacherId', body.teacher.id);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('campus host, director-only, or inactive', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Campus login is only allowed on that school's host',",
+                  "      'Only the school director can manage teachers',",
+                  "      'This school account is not active'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('teacher or path not found', function () {",
+                  "    pm.expect(body.error).to.be.oneOf(['Teacher not found', 'Not found']);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('resend locked after password change', function () {",
+                  "    pm.expect(body.error).to.eql(",
+                  "      'Credentials cannot be resent after the password is changed'",
+                  "    );",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "st44r4004-0004-4000-8000-000000000200",
+              "name": "200 Credentials resent",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555555\",\n    \"givenName\": \"Abebe\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Abebe Bekele Tesfaye\",\n    \"sex\": \"male\",\n    \"phone\": \"+251912345678\",\n    \"email\": \"abebe@north-hall.et\",\n    \"employeeId\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null,\n    \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n  },\n  \"credentials\": {\n    \"email\": \"abebe@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"loginUrl\": \"http://north-ridge.e-school.et:3000/login?email=abebe%40north-hall.et\"\n  },\n  \"emailSent\": true\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000210",
+              "name": "200 Resent but credentials email failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"teacher\": {\n    \"id\": \"55555555-5555-4555-8555-555555555555\",\n    \"givenName\": \"Abebe\",\n    \"fatherName\": \"Bekele\",\n    \"grandfatherName\": \"Tesfaye\",\n    \"displayName\": \"Abebe Bekele Tesfaye\",\n    \"sex\": \"male\",\n    \"phone\": \"+251912345678\",\n    \"email\": \"abebe@north-hall.et\",\n    \"employeeId\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": false,\n    \"lastMailError\": \"SMTP refused the message\",\n    \"signedInAt\": null,\n    \"createdAt\": \"2026-09-07T13:45:00.000Z\"\n  },\n  \"credentials\": {\n    \"email\": \"abebe@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"loginUrl\": \"http://north-ridge.e-school.et:3000/login?email=abebe%40north-hall.et\"\n  },\n  \"emailSent\": false,\n  \"emailError\": \"SMTP refused the message\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000411",
+              "name": "401 Admin or invalid HMAC",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000403",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000413",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000423",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Campus login is only allowed on that school's host\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000443",
+              "name": "403 School not active",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is not active\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000453",
+              "name": "403 Teacher session cannot resend",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{teacherAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Only the school director can manage teachers\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000404",
+              "name": "404 Non-UUID id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/not-a-uuid/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "not-a-uuid",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "not-a-uuid",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Teacher not found\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000414",
+              "name": "404 Unknown id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/99999999-9999-4999-8999-999999999999/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "99999999-9999-4999-8999-999999999999",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "99999999-9999-4999-8999-999999999999",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Teacher not found\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000424",
+              "name": "404 Extra path (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials/extra",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials",
+                    "extra"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000434",
+              "name": "404 Empty id segment (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers//resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000444",
+              "name": "404 Missing resend suffix (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000409",
+              "name": "409 Password already claimed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Credentials cannot be resent after the password is changed\"\n}"
+            },
+            {
+              "id": "st44r4004-0004-4000-8000-000000000405",
+              "name": "405 Method not allowed (GET)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{campusAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-teachers/{{teacherId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-teachers",
+                    "{{teacherId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "teacherId",
+                      "value": "{{teacherId}}",
+                      "description": "Teacher UUID from create/list (`{{teacherId}}`). `readSchoolTeacherResend`: segment between `/school-teachers/` and `/resend-credentials`. Empty or extra `/` does not match (generic 404 Not found). `isTeacherId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Teacher not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

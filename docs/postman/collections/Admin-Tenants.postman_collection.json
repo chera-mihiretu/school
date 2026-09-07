@@ -1,0 +1,4538 @@
+{
+  "info": {
+    "_postman_id": "a11a1008-4d7e-4b2a-9f11-6e0c1d8a4b08",
+    "name": "School API — Admin Tenants",
+    "description": "Platform-admin tenants. **Documented (Batches 6–7):** `GET|POST /admin/tenants`, `GET /admin/tenants/username`, `POST /admin/tenants/:id/reactivate`, `POST /admin/tenants/:id/resend-credentials`, `POST /admin/tenants/:id/suspend`.\n\n- `requireAdminSession` runs **before** host and method — missing/invalid token is **401** `{ \"error\": \"Unauthorized\" }` even on a school host.\n- Wrong host after a valid admin token: **403** `{ \"error\": \"This action is only allowed on the admin host\" }`.\n- List pagination is **not** the contact inbox: default page 1, pageSize **10**, max **50**.\n- Create body is `{ name, email }` — **no slug**. List and create write `{{tenantId}}`.\n- Username lookup is this file (`GET /admin/tenants/username`). School-account username lookup/claim stays in `School-Accounts.postman_collection.json`.\n- `store.setStatus` is unguarded and idempotent: suspend → `suspended` from any status; reactivate → `active` from any status (including `pending_setup`).\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. All 28 live backend endpoints are in the split collections — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin Tenants",
+      "description": "Tenant directory on `admin.<rootHost>`. Sign in via **Admin Session** first (`{{accessToken}}`).\n\n**This collection:** list (newest first), create pending schools from name + email, username availability, reactivate, resend-credentials, suspend.\n\nSchool-account username lookup/claim stays in `School-Accounts`. `GET /admin/dashboard` is not documented here.",
+      "item": [
+        {
+          "name": "List tenants",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing, non-Bearer, expired, school/campus HMAC, or bad signature → 401 Unauthorized. Checked before the host."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token. School / app / apex → 403."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": true,
+                  "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                },
+                {
+                  "key": "pageSize",
+                  "value": "10",
+                  "disabled": true,
+                  "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                }
+              ]
+            },
+            "description": "Lists platform tenants newest-first for the signed-in operator.\n\n**Auth:** required. `requireAdminSession` runs **before** host and method. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth):** `rejectIfNotAdminHost`. `{{adminHost}}` = `admin.e-school.et:3000` is valid. School / app / apex → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Query (NOT the contact inbox):** `page` default **1**, `pageSize` default **10**, max **50**. `normalizePage` / `normalizePageSize` use `Number.parseInt` (strings) or `Math.trunc` (finite numbers). Empty / non-numeric → defaults. `page < 1` → **1**. `pageSize < 1` → **1**. `pageSize` 100 → **50**. Invalid query never 400s. Contact inbox instead defaults `pageSize` to **50**, caps at **100**, and uses `Number()` + `Number.isInteger`.\n\n**Order:** `createdAt` descending, then `id` descending.\n\n**Tenant view:** `{ id, name, slug, username, email, status, created, founded, host, mustChangePassword, lastMailAt, lastMailOk, lastMailError, signedInAt }`. `username` is the same as `slug`. `slug` / `username` / `host` are `null` until the director claims a username. `host` is `{slug}.{rootHost}` with **no port** when claimed. `status` is `pending_setup` | `active` | `suspended`. ISO-8601 for `created` / `lastMailAt` / `signedInAt`.\n\n**Side effects:** none.\n\n**Success `200`:** `{ schools, page, pageSize, total }`. Empty directory is still 200 with `schools: []`, `total: 0`. Test script writes `{{tenantId}}` from `schools[0].id` when present.\n\n**Same path as POST.** `405` is PUT/PATCH/DELETE only (after a valid admin token). A POST without a body is **create**, not 405.\n\n**Also in this collection:** `GET /admin/tenants/username`, `POST /admin/tenants/:id/reactivate|resend-credentials|suspend`. `GET /admin/dashboard` is not documented here. School-account username lookup/claim stays in `School-Accounts`.\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 405 other methods.\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('tenant list is { schools, page, pageSize, total }', function () {",
+                  "    pm.expect(body).to.have.property('schools').that.is.an('array');",
+                  "    pm.expect(body.page).to.be.a('number');",
+                  "    pm.expect(body.pageSize).to.be.a('number');",
+                  "    pm.expect(body.total).to.be.a('number');",
+                  "    body.schools.forEach(function (school) {",
+                  "      pm.expect(school).to.have.property('id').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('name').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('slug');",
+                  "      pm.expect(school).to.have.property('username');",
+                  "      pm.expect(school).to.have.property('email');",
+                  "      pm.expect(school.status).to.be.oneOf(['pending_setup', 'active', 'suspended']);",
+                  "      pm.expect(school.created).to.be.a('string');",
+                  "      pm.expect(school.founded).to.be.a('string');",
+                  "      pm.expect(school).to.have.property('host');",
+                  "      pm.expect(school.mustChangePassword).to.be.a('boolean');",
+                  "      pm.expect(school).to.have.property('lastMailAt');",
+                  "      pm.expect(school).to.have.property('lastMailOk');",
+                  "      pm.expect(school).to.have.property('lastMailError');",
+                  "      pm.expect(school).to.have.property('signedInAt');",
+                  "    });",
+                  "  });",
+                  "  const first = body.schools[0];",
+                  "  if (first && typeof first.id === 'string' && first.id.length > 0) {",
+                  "    pm.environment.set('tenantId', first.id);",
+                  "    pm.collectionVariables.set('tenantId', first.id);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t11l1001-0001-4000-8000-000000000200",
+              "name": "200 First page newest first",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111103\",\n      \"name\": \"School 3\",\n      \"slug\": \"school-3\",\n      \"username\": \"school-3\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-03T10:00:00.000Z\",\n      \"founded\": \"Founded 2023\",\n      \"host\": \"school-3.e-school.et\",\n      \"mustChangePassword\": false,\n      \"lastMailAt\": null,\n      \"lastMailOk\": null,\n      \"lastMailError\": null,\n      \"signedInAt\": null\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111102\",\n      \"name\": \"School 2\",\n      \"slug\": \"school-2\",\n      \"username\": \"school-2\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-02T10:00:00.000Z\",\n      \"founded\": \"Founded 2022\",\n      \"host\": \"school-2.e-school.et\",\n      \"mustChangePassword\": false,\n      \"lastMailAt\": null,\n      \"lastMailOk\": null,\n      \"lastMailError\": null,\n      \"signedInAt\": null\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111101\",\n      \"name\": \"School 1\",\n      \"slug\": \"school-1\",\n      \"username\": \"school-1\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"founded\": \"Founded 2021\",\n      \"host\": \"school-1.e-school.et\",\n      \"mustChangePassword\": false,\n      \"lastMailAt\": null,\n      \"lastMailOk\": null,\n      \"lastMailError\": null,\n      \"signedInAt\": null\n    }\n  ],\n  \"page\": 1,\n  \"pageSize\": 10,\n  \"total\": 3\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000201",
+              "name": "200 Empty directory",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [],\n  \"page\": 1,\n  \"pageSize\": 10,\n  \"total\": 0\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000202",
+              "name": "200 Second page",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants?page=2&pageSize=2",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "2",
+                      "description": "Second page."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "2",
+                      "description": "Two rows per page."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111101\",\n      \"name\": \"School 1\",\n      \"slug\": \"school-1\",\n      \"username\": \"school-1\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"founded\": \"Founded 2021\",\n      \"host\": \"school-1.e-school.et\",\n      \"mustChangePassword\": false,\n      \"lastMailAt\": null,\n      \"lastMailOk\": null,\n      \"lastMailError\": null,\n      \"signedInAt\": null\n    }\n  ],\n  \"page\": 2,\n  \"pageSize\": 2,\n  \"total\": 3\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000203",
+              "name": "200 Clamped page bounds",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants?page=0&pageSize=100",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "0",
+                      "description": "Clamped to 1."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "100",
+                      "description": "Clamped to 50."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111103\",\n      \"name\": \"School 3\",\n      \"slug\": \"school-3\",\n      \"username\": \"school-3\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-03T10:00:00.000Z\",\n      \"founded\": \"Founded 2023\",\n      \"host\": \"school-3.e-school.et\",\n      \"mustChangePassword\": false,\n      \"lastMailAt\": null,\n      \"lastMailOk\": null,\n      \"lastMailError\": null,\n      \"signedInAt\": null\n    }\n  ],\n  \"page\": 1,\n  \"pageSize\": 50,\n  \"total\": 1\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1",
+                      "disabled": true,
+                      "description": "1-based page. parseInt / Math.trunc. Omitted, empty, or non-numeric → 1. page < 1 (0, -4) → 1. Not the contact-inbox Number() / default-50 rules."
+                    },
+                    {
+                      "key": "pageSize",
+                      "value": "10",
+                      "disabled": true,
+                      "description": "Page size. parseInt / Math.trunc. Omitted/empty/non-numeric → 10. pageSize < 1 → 1. Max 50 (100 clamps to 50). Contact inbox defaults to 50 and caps at 100."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t11l1001-0001-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create tenant",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid token → 401 before host or body."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token."
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body { name, email }. No slug. Invalid JSON → 400 Invalid JSON. Missing fields become \"\"."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants"
+              ]
+            },
+            "description": "Creates a pending tenant from **name + email only**. The handler does **not** read `slug`.\n\n**Auth:** required. Same 401-before-host rule as GET.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Body:** `{ name, email }`. Non-string or missing keys become `\"\"` (not 400-for-missing-key). Non-object JSON is treated as `{}`. Empty body `{}` is valid JSON then fails name validation.\n\n**Validate name first, then email:**\n- `name` — `trim`. Empty → `A school name is required`. Over **200** → `School name is too long`.\n- `email` — `trim` + lowercase. Empty → `Email is required`. Must match `[^\\s@]+@[^\\s@]+\\.[^\\s@]+` or `A valid email is required`.\n\n**409 always the same text:** `{ \"error\": \"This email cannot be used.\" }` for platform-admin email (case-insensitive), an existing tenant email, or a unique-index race. The body never says which. No mail is sent on 409.\n\n**Side effects:** inserts a `pending_setup` school (`slug` / `username` / `host` null, `mustChangePassword` true, `founded` = `Founded {UTC year}`), hashes a generated temporary password, and emails first-login credentials (`http://app.{rootHost}:3000/first-login?email=...`). Mailer failure still **201** — `emailSent: false` and `emailError` are set; `school.lastMailOk` / `lastMailError` record the attempt.\n\n**Success `201`:** `{ school, credentials: { email, password, firstLoginUrl }, emailSent, emailError? }`. `school` is the tenant admin view. Test script writes `{{tenantId}}` from `school.id`.\n\n**Same path as GET.** `405` is PUT/PATCH/DELETE only (after a valid admin token).\n\n**Also in this collection:** username lookup, reactivate, resend-credentials, suspend.\n\n**Errors that exist:** 400 Invalid JSON / name / email; 401 Unauthorized; 403 admin-host only; 409 email cannot be used; 405 other methods.\n\n**Not used:** 404, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 201) {",
+                  "  pm.test('created tenant is { school, credentials, emailSent }', function () {",
+                  "    pm.expect(body).to.have.property('school').that.is.an('object');",
+                  "    pm.expect(body.school.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.school.name).to.be.a('string');",
+                  "    pm.expect(body.school).to.have.property('slug');",
+                  "    pm.expect(body.school).to.have.property('username');",
+                  "    pm.expect(body.school.email).to.be.a('string');",
+                  "    pm.expect(body.school.status).to.eql('pending_setup');",
+                  "    pm.expect(body.school.mustChangePassword).to.eql(true);",
+                  "    pm.expect(body.credentials).to.be.an('object');",
+                  "    pm.expect(body.credentials.email).to.be.a('string');",
+                  "    pm.expect(body.credentials.password).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.credentials.firstLoginUrl).to.be.a('string');",
+                  "    pm.expect(body.emailSent).to.be.a('boolean');",
+                  "  });",
+                  "  if (typeof body.school.id === 'string' && body.school.id.length > 0) {",
+                  "    pm.environment.set('tenantId', body.school.id);",
+                  "    pm.collectionVariables.set('tenantId', body.school.id);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON or name/email error', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Invalid JSON',",
+                  "      'A school name is required',",
+                  "      'School name is too long',",
+                  "      'Email is required',",
+                  "      'A valid email is required'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('email cannot be used (generic)', function () {",
+                  "    pm.expect(body.error).to.eql('This email cannot be used.');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t22c2002-0002-4000-8000-000000000201",
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"pending_setup\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  },\n  \"credentials\": {\n    \"email\": \"head@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"firstLoginUrl\": \"http://app.e-school.et:3000/first-login?email=head%40north-hall.et\"\n  },\n  \"emailSent\": true\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000211",
+              "name": "201 Created but invite email failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"pending_setup\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": false,\n    \"lastMailError\": \"SMTP refused the message\",\n    \"signedInAt\": null\n  },\n  \"credentials\": {\n    \"email\": \"head@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"firstLoginUrl\": \"http://app.e-school.et:3000/first-login?email=head%40north-hall.et\"\n  },\n  \"emailSent\": false,\n  \"emailError\": \"SMTP refused the message\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ name: North Hall, email: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000410",
+              "name": "400 School name required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"head@west-gate.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"A school name is required\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000420",
+              "name": "400 School name too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\n  \"email\": \"head@west-gate.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School name is too long\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000430",
+              "name": "400 Email required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"West Gate\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Email is required\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000440",
+              "name": "400 Invalid email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"West Gate\",\n  \"email\": \"not-an-email\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"A valid email is required\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000409",
+              "name": "409 Platform admin email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Admin Campus\",\n  \"email\": \"  Admin@E-School.et \"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This email cannot be used.\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000419",
+              "name": "409 Existing tenant email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall Two\",\n  \"email\": \"Head@North-Hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This email cannot be used.\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"North Hall\",\n  \"email\": \"head@north-hall.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t22c2002-0002-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Lookup tenant username",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid/school HMAC → 401 Unauthorized. Checked before host and method."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token and GET. School / app / apex → 403."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants/username?slug=west-quay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "username"
+              ],
+              "query": [
+                {
+                  "key": "slug",
+                  "value": "west-quay",
+                  "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                }
+              ]
+            },
+            "description": "Checks whether a tenant username (subdomain slug) is free. **Exact path** `/admin/tenants/username`, matched **before** `:id` actions.\n\n**Auth:** required. `requireAdminSession` runs **before** host and method. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator. This is **not** `GET /school-accounts/username` (that stays in School-Accounts).\n\n**Host (required after auth+GET):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Query:** `slug` — `searchParams.get(\"slug\") ?? \"\"`. Trim + lowercase (`normalizeSchoolSlug`). Missing, empty, or whitespace → `username: \"\"` and `reason: \"invalid\"`. Pattern `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`. There is **no 400** for a bad slug.\n\n**Always `200` after auth+host:**\n- `{ username, available: true }` — no `reason`.\n- `{ username, available: false, reason }` where `reason` is `invalid` | `reserved` | `taken`.\n\n**Reasons:** empty/invalid pattern → `invalid`; reserved (`www`, `api`, `app`, `admin`, `mail`, `ftp`) → `reserved`; existing tenant slug (`store.findBySlug`) → `taken`.\n\n**Side effects:** none. Does not claim the slug.\n\n**Same path.** Not GET → `405 { \"error\": \"Method not allowed\" }` after a valid admin token (host is not checked on 405).\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 405 other methods.\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('username lookup is { username, available } and optional reason', function () {",
+                  "    pm.expect(body).to.have.property('username').that.is.a('string');",
+                  "    pm.expect(body.available).to.be.a('boolean');",
+                  "    if (body.available === true) {",
+                  "      pm.expect(body).to.not.have.property('reason');",
+                  "    } else {",
+                  "      pm.expect(body.reason).to.be.oneOf(['invalid', 'reserved', 'taken']);",
+                  "    }",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t33u3003-0003-4000-8000-000000000200",
+              "name": "200 Available",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=west-quay",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "west-quay",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"west-quay\",\n  \"available\": true\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000210",
+              "name": "200 Trimmed and lowercased",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=North-Hall",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "North-Hall",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"north-hall\",\n  \"available\": true\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000220",
+              "name": "200 Reserved",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=admin",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "admin",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"admin\",\n  \"available\": false,\n  \"reason\": \"reserved\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000230",
+              "name": "200 Taken",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=west-quay",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "west-quay",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"west-quay\",\n  \"available\": false,\n  \"reason\": \"taken\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000240",
+              "name": "200 Invalid slug",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=-nope-",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "-nope-",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"-nope-\",\n  \"available\": false,\n  \"reason\": \"invalid\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000250",
+              "name": "200 Missing slug (invalid)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"username\": \"\",\n  \"available\": false,\n  \"reason\": \"invalid\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=east-yard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "east-yard",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t33u3003-0003-4000-8000-000000000-405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/username?slug=west-quay",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "west-quay",
+                      "description": "Candidate username. Trim + lowercase (`normalizeSchoolSlug`). Missing param becomes \"\". Empty/invalid pattern → 200 reason invalid (no 400). Reserved: www, api, app, admin, mail, ftp. Existing tenant slug → taken."
+                    }
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Reactivate tenant",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid token → 401 before host, method, or id."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token and POST."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "reactivate"
+              ],
+              "variable": [
+                {
+                  "key": "tenantId",
+                  "value": "{{tenantId}}",
+                  "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                }
+              ]
+            },
+            "description": "Sets the tenant status to **`active`**. `store.setStatus` is **unguarded and idempotent** — works from `pending_setup`, `suspended`, or already `active`. Does **not** claim a username; `slug` / `username` / `host` stay as they were.\n\n**Auth:** required. `requireAdminSession` runs **before** host and method. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth+POST):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Path:** `readAdminTenantAction` — `/admin/tenants/:id/reactivate`. `:id` is the segment before the first `/`. Empty (`/admin/tenants//reactivate`) or extra (`.../:id/reactivate/extra`) do **not** match (generic `404 { \"error\": \"Not found\" }`). Unmatched paths never reach `requireAdminSession` — generic 404 even without a token. Unknown action kind (`.../:id/archive`) is also generic 404. `/admin/tenants/username` is a different route and is matched first.\n\n**Id:** `isTenantId` — UUID regex (any version, case-insensitive). Non-UUID (`not-a-uuid`) **and** unknown UUID both → `404 { \"error\": \"Tenant not found\" }`. There is **no 400** for a bad id.\n\n**Body:** none. The handler does not call `readJsonBody`.\n\n**Side effects:** `status = active`. No mail. Create starts at `pending_setup`; claiming a username (School-Accounts) also sets `active` + slug.\n\n**Success `200`:** `{ \"school\" }` — tenant admin view (`id`, `name`, `slug`, `username`, `email`, `status`, `created`, `founded`, `host`, `mustChangePassword`, `lastMailAt`, `lastMailOk`, `lastMailError`, `signedInAt`).\n\n**Same matcher as suspend / resend-credentials.** Not POST → `405 { \"error\": \"Method not allowed\" }` after a valid admin token (host is not checked on 405).\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 404 Tenant not found / generic Not found; 405 other methods.\n\n**Not used:** 400, 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('tenant action is { school } with admin fields', function () {",
+                  "    pm.expect(body).to.have.property('school').that.is.an('object');",
+                  "    pm.expect(body.school.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.school.name).to.be.a('string');",
+                  "    pm.expect(body.school).to.have.property('slug');",
+                  "    pm.expect(body.school).to.have.property('username');",
+                  "    pm.expect(body.school).to.have.property('email');",
+                  "    pm.expect(body.school.status).to.eql('active');",
+                  "    pm.expect(body.school.created).to.be.a('string');",
+                  "    pm.expect(body.school.founded).to.be.a('string');",
+                  "    pm.expect(body.school).to.have.property('host');",
+                  "    pm.expect(body.school.mustChangePassword).to.be.a('boolean');",
+                  "    pm.expect(body.school).to.have.property('lastMailAt');",
+                  "    pm.expect(body.school).to.have.property('lastMailOk');",
+                  "    pm.expect(body.school).to.have.property('lastMailError');",
+                  "    pm.expect(body.school).to.have.property('signedInAt');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('tenant or path not found', function () {",
+                  "    pm.expect(body.error).to.be.oneOf(['Tenant not found', 'Not found']);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t44r4004-0004-4000-8000-000000000200",
+              "name": "200 Reactivated from suspended",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"active\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000210",
+              "name": "200 Already active (idempotent)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": \"north-hall\",\n    \"username\": \"north-hall\",\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"active\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": \"north-hall.e-school.et\",\n    \"mustChangePassword\": false,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000220",
+              "name": "200 From pending_setup",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"active\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-404",
+              "name": "404 Non-UUID id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/not-a-uuid/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "not-a-uuid",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "not-a-uuid",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-414",
+              "name": "404 Unknown id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/99999999-9999-4999-8999-999999999999/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "99999999-9999-4999-8999-999999999999",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "99999999-9999-4999-8999-999999999999",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-424",
+              "name": "404 Extra path (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate/extra",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate",
+                    "extra"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-434",
+              "name": "404 Empty id segment (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants//reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "",
+                    "reactivate"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-444",
+              "name": "404 Unknown action kind (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/archive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "archive"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t44r4004-0004-4000-8000-000000000-405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/reactivate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "reactivate"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Resend tenant credentials",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid token → 401 before host, method, or id."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token and POST."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "resend-credentials"
+              ],
+              "variable": [
+                {
+                  "key": "tenantId",
+                  "value": "{{tenantId}}",
+                  "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                }
+              ]
+            },
+            "description": "Rotates the director temporary password and emails first-login credentials. **No body.**\n\n**Auth:** required. `requireAdminSession` runs **before** host and method. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth+POST):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Path / id:** same `readAdminTenantAction` rules as reactivate/suspend. Empty or extra `/` → generic `404 { \"error\": \"Not found\" }`. Unmatched paths never reach `requireAdminSession` — generic 404 even without a token. Non-UUID and unknown id → `404 { \"error\": \"Tenant not found\" }` (no 400). A row with no stored password hash is also `Tenant not found` (`findAuthById` returns undefined).\n\n**Body:** none. The handler does not call `readJsonBody`.\n\n**409 exact texts** (checked in this order):\n- `\"Cannot resend credentials while the school is suspended\"`\n- `\"Credentials cannot be resent after the username is claimed\"` (`slug !== null`)\n- `\"This school has no director email\"` (`email === null`)\n\n**Side effects:** generates a new password, writes the hash, sets `mustChangePassword: true`, emails `http://app.{rootHost}:3000/first-login?email=...`. Mailer failure still **200** — `emailSent: false` and `emailError` are set; `school.lastMailOk` / `lastMailError` record the attempt. The previous password stops verifying.\n\n**Success `200`:** `{ school, credentials: { email, password, firstLoginUrl }, emailSent, emailError? }`.\n\n**Same matcher as suspend / reactivate.** Not POST → `405 { \"error\": \"Method not allowed\" }` after a valid admin token (host is not checked on 405).\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 404 Tenant not found / generic Not found; 409 the three texts above; 405 other methods.\n\n**Not used:** 400, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('resent credentials are { school, credentials, emailSent }', function () {",
+                  "    pm.expect(body).to.have.property('school').that.is.an('object');",
+                  "    pm.expect(body.school.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.school.mustChangePassword).to.eql(true);",
+                  "    pm.expect(body.credentials).to.be.an('object');",
+                  "    pm.expect(body.credentials.email).to.be.a('string');",
+                  "    pm.expect(body.credentials.password).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.credentials.firstLoginUrl).to.be.a('string');",
+                  "    pm.expect(body.emailSent).to.be.a('boolean');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('tenant or path not found', function () {",
+                  "    pm.expect(body.error).to.be.oneOf(['Tenant not found', 'Not found']);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 409) {",
+                  "  pm.test('resend conflict', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Cannot resend credentials while the school is suspended',",
+                  "      'Credentials cannot be resent after the username is claimed',",
+                  "      'This school has no director email'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t55c5005-0005-4000-8000-000000000200",
+              "name": "200 Resent",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"pending_setup\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T14:00:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  },\n  \"credentials\": {\n    \"email\": \"head@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"firstLoginUrl\": \"http://app.e-school.et:3000/first-login?email=head%40north-hall.et\"\n  },\n  \"emailSent\": true\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000210",
+              "name": "200 Resent but invite email failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"pending_setup\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T14:00:00.000Z\",\n    \"lastMailOk\": false,\n    \"lastMailError\": \"SMTP refused the message\",\n    \"signedInAt\": null\n  },\n  \"credentials\": {\n    \"email\": \"head@north-hall.et\",\n    \"password\": \"temp-password-16x\",\n    \"firstLoginUrl\": \"http://app.e-school.et:3000/first-login?email=head%40north-hall.et\"\n  },\n  \"emailSent\": false,\n  \"emailError\": \"SMTP refused the message\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000409",
+              "name": "409 School is suspended",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Cannot resend credentials while the school is suspended\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000419",
+              "name": "409 Username already claimed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Credentials cannot be resent after the username is claimed\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000429",
+              "name": "409 No director email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school has no director email\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-404",
+              "name": "404 Non-UUID id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/not-a-uuid/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "not-a-uuid",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "not-a-uuid",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-414",
+              "name": "404 Unknown id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/99999999-9999-4999-8999-999999999999/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "99999999-9999-4999-8999-999999999999",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "99999999-9999-4999-8999-999999999999",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-424",
+              "name": "404 Extra path (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials/extra",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials",
+                    "extra"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-434",
+              "name": "404 Empty id segment (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants//resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "",
+                    "resend-credentials"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-444",
+              "name": "404 Unknown action kind (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/archive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "archive"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t55c5005-0005-4000-8000-000000000-405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/resend-credentials",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "resend-credentials"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Suspend tenant",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing/invalid token → 401 before host, method, or id."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip. Checked only after a valid admin token and POST."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "tenants",
+                "{{tenantId}}",
+                "suspend"
+              ],
+              "variable": [
+                {
+                  "key": "tenantId",
+                  "value": "{{tenantId}}",
+                  "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                }
+              ]
+            },
+            "description": "Sets the tenant status to **`suspended`**. `store.setStatus` is **unguarded and idempotent** — works from `pending_setup`, `active`, or already `suspended`. Does **not** clear slug, email, or host.\n\n**Auth:** required. `requireAdminSession` runs **before** host and method. Missing/invalid/school HMAC → `401 { \"error\": \"Unauthorized\" }` even on a school host.\n\n**Who:** the signed-in platform operator.\n\n**Host (required after auth+POST):** `rejectIfNotAdminHost`. Wrong host → `403 { \"error\": \"This action is only allowed on the admin host\" }`.\n\n**Path:** `readAdminTenantAction` — `/admin/tenants/:id/suspend`. `:id` is the segment before the first `/`. Empty or extra `/` do **not** match (generic `404 { \"error\": \"Not found\" }`). Unmatched paths never reach `requireAdminSession` — generic 404 even without a token. Unknown action kind is also generic 404.\n\n**Id:** `isTenantId` — UUID regex (any version, case-insensitive). Non-UUID **and** unknown UUID both → `404 { \"error\": \"Tenant not found\" }`. There is **no 400** for a bad id.\n\n**Body:** none. The handler does not call `readJsonBody`.\n\n**Side effects:** `status = suspended`. No mail. Create starts at `pending_setup`; claim username (School-Accounts) sets `active` + slug; reactivate sets `active` from any status.\n\n**Success `200`:** `{ \"school\" }` — tenant admin view. `status` is `suspended`.\n\n**Same matcher as reactivate / resend-credentials.** Not POST → `405 { \"error\": \"Method not allowed\" }` after a valid admin token (host is not checked on 405).\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 404 Tenant not found / generic Not found; 405 other methods.\n\n**Not used:** 400, 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('tenant action is { school } with admin fields', function () {",
+                  "    pm.expect(body).to.have.property('school').that.is.an('object');",
+                  "    pm.expect(body.school.id).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.school.name).to.be.a('string');",
+                  "    pm.expect(body.school).to.have.property('slug');",
+                  "    pm.expect(body.school).to.have.property('username');",
+                  "    pm.expect(body.school).to.have.property('email');",
+                  "    pm.expect(body.school.status).to.eql('suspended');",
+                  "    pm.expect(body.school.created).to.be.a('string');",
+                  "    pm.expect(body.school.founded).to.be.a('string');",
+                  "    pm.expect(body.school).to.have.property('host');",
+                  "    pm.expect(body.school.mustChangePassword).to.be.a('boolean');",
+                  "    pm.expect(body.school).to.have.property('lastMailAt');",
+                  "    pm.expect(body.school).to.have.property('lastMailOk');",
+                  "    pm.expect(body.school).to.have.property('lastMailError');",
+                  "    pm.expect(body.school).to.have.property('signedInAt');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 404) {",
+                  "  pm.test('tenant or path not found', function () {",
+                  "    pm.expect(body.error).to.be.oneOf(['Tenant not found', 'Not found']);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "t66s6006-0006-4000-8000-000000000200",
+              "name": "200 Suspended from pending_setup",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"suspended\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000210",
+              "name": "200 Already suspended (idempotent)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": null,\n    \"username\": null,\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"suspended\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": null,\n    \"mustChangePassword\": true,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000220",
+              "name": "200 Suspended from active",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"school\": {\n    \"id\": \"22222222-2222-4222-8222-222222222222\",\n    \"name\": \"North Hall\",\n    \"slug\": \"north-hall\",\n    \"username\": \"north-hall\",\n    \"email\": \"head@north-hall.et\",\n    \"status\": \"suspended\",\n    \"created\": \"2026-09-07T13:45:00.000Z\",\n    \"founded\": \"Founded 2026\",\n    \"host\": \"north-hall.e-school.et\",\n    \"mustChangePassword\": false,\n    \"lastMailAt\": \"2026-09-07T13:45:00.000Z\",\n    \"lastMailOk\": true,\n    \"lastMailError\": null,\n    \"signedInAt\": null\n  }\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-404",
+              "name": "404 Non-UUID id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/not-a-uuid/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "not-a-uuid",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "not-a-uuid",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-414",
+              "name": "404 Unknown id",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/99999999-9999-4999-8999-999999999999/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "99999999-9999-4999-8999-999999999999",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "99999999-9999-4999-8999-999999999999",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Tenant not found\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-424",
+              "name": "404 Extra path (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend/extra",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend",
+                    "extra"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-434",
+              "name": "404 Empty id segment (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants//suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "",
+                    "suspend"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-444",
+              "name": "404 Unknown action kind (generic)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/archive",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "archive"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Not found\"\n}"
+            },
+            {
+              "id": "t66s6006-0006-4000-8000-000000000-405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/tenants/{{tenantId}}/suspend",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "tenants",
+                    "{{tenantId}}",
+                    "suspend"
+                  ],
+                  "variable": [
+                    {
+                      "key": "tenantId",
+                      "value": "{{tenantId}}",
+                      "description": "Tenant UUID from list/create (`{{tenantId}}`). `readAdminTenantAction`: segment before the first `/`. Empty or extra `/` does not match (generic 404 Not found). `isTenantId` is UUID (any version, case-insensitive). Non-UUID and unknown id → 404 Tenant not found (no 400)."
+                    }
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

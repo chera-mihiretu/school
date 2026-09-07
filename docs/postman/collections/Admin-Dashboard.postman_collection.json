@@ -1,0 +1,604 @@
+{
+  "info": {
+    "_postman_id": "a11a1010-4d7e-4b2a-9f11-6e0c1d8a4b10",
+    "name": "School API — Admin Dashboard",
+    "description": "Platform-admin dashboard counters. **Documented:** `GET /admin/dashboard`.\n\nThis is the last live backend route. Import list is complete. Do not recreate a monolith.\n\n- Requires Bearer `{{accessToken}}` **then** `{{adminHost}}`.\n- `requireAdminSession` runs **before** method and host — missing/invalid token is **401** `{ \"error\": \"Unauthorized\" }` even on a school host.\n- Wrong method after a valid admin token: **405** `{ \"error\": \"Method not allowed\" }` (method is checked **before** host — POST on a school host is 405, not 403).\n- Wrong host after a valid admin GET: **403** `{ \"error\": \"This action is only allowed on the admin host\" }`.\n- Tenant directory stays in `Admin-Tenants.postman_collection.json`. Newest here is a **3-row** summary, not the paged list.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. All live backend method+path pairs are in the split collections.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Admin Dashboard",
+      "description": "Derived platform counters on `admin.<rootHost>`. Sign in via **Admin Session** first (`{{accessToken}}`). Host must be `admin.{{rootHost}}` (`{{adminHost}}` = `admin.e-school.et:3000`).\n\nReads `store.readDashboardStats()` and derives `servingPercent` as `Math.round(activeCount / schoolCount * 100)` (0 when there are no schools). `newest` is capped at **3** (createdAt desc, then id desc). Year buckets use the UTC year of `createdAt` as a **string** key.\n\nNo query params. No JSON body. Does not write environment ids — copy a tenant id from **Admin Tenants** if needed.",
+      "item": [
+        {
+          "name": "Get admin dashboard",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}",
+                "description": "HMAC admin session from POST /admin/session. Missing header, non-Bearer scheme, empty token, expired, school/campus HMAC, or bad signature → 401 Unauthorized. Checked before method and host."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{adminHost}}",
+                "description": "Must be admin.<rootHost> after port strip (admin.e-school.et or admin.e-school.et:3000). Checked only after a valid admin token AND GET. School / app / apex / Host fallback → 403."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "dashboard"
+              ]
+            },
+            "description": "Returns platform-wide tenant counters for the signed-in operator.\n\n**Auth:** required. `Authorization: Bearer {{accessToken}}`. `requireAdminSession` / `readPlatformAdminSession` runs **before** method and host. Missing header, non-`Bearer ` scheme, empty token, expired, or school/campus HMAC → `401 { \"error\": \"Unauthorized\" }` **even when `x-school-host` is a school host**.\n\n**Who:** the signed-in platform operator. School and campus tokens will not verify (different HMAC material).\n\n**Method (after auth):** GET only. POST / PUT / PATCH / DELETE → `405 { \"error\": \"Method not allowed\" }`. Method is checked **before** `rejectIfNotAdminHost`, so a non-GET with a valid admin token on a school host is **405**, not 403.\n\n**Host (required after auth + GET):** `rejectIfNotAdminHost` / `isPlatformAdminHost`. `x-school-host` (else `Host`) must be `admin.{{rootHost}}` after lowercase + port strip. `{{adminHost}}` = `admin.e-school.et:3000` is valid. School / app / apex / `127.0.0.1` → `403 { \"error\": \"This action is only allowed on the admin host\" }` (not the admin-login 403 text).\n\n**Query / body:** none. Extra query strings are ignored. No 400 from this handler.\n\n**Side effects:** none. Reads the `platform.dashboard_stats` row (or the in-memory equivalent). Does not create or mutate tenants.\n\n**Success `200`:** `{ schoolCount, activeCount, pendingSetupCount, suspendedCount, servingPercent, createdByYear, newest }`.\n- Counts are non-negative integers. Empty directory is still 200 with all counts **0**, `servingPercent` **0**, `createdByYear` `{}`, `newest` `[]`.\n- `servingPercent` is derived: `total === 0 ? 0 : Math.round((activeCount / schoolCount) * 100)` (1/3 → **33**, 2/3 → **67**). Not stored on the stats row.\n- `createdByYear` is `Record<string, number>` with UTC year keys (`\"2026\"`, not `2026`).\n- `newest` is at most **3** schools: `{ id, name, slug, email, status, created }`. `status` is `pending_setup` | `active` | `suspended`. `slug` / `email` may be `null` (`pending_setup` typically has `slug: null`). `created` is ISO-8601 from `createdAt`. Order: newest `createdAt` first, then `id` descending.\n- HTTP body does **not** include `ok`, `updatedAt`, `founded`, `username`, `host`, `mustChangePassword`, or mail/sign-in fields. Those belong to `GET /admin/tenants`.\n\n**Errors that exist:** 401 Unauthorized; 403 admin-host only; 405 if not GET (reached only **after** a valid admin token).\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('dashboard is { schoolCount, activeCount, pendingSetupCount, suspendedCount, servingPercent, createdByYear, newest }', function () {",
+                  "    pm.expect(body).to.have.property('schoolCount').that.is.a('number');",
+                  "    pm.expect(body).to.have.property('activeCount').that.is.a('number');",
+                  "    pm.expect(body).to.have.property('pendingSetupCount').that.is.a('number');",
+                  "    pm.expect(body).to.have.property('suspendedCount').that.is.a('number');",
+                  "    pm.expect(body).to.have.property('servingPercent').that.is.a('number');",
+                  "    pm.expect(body).to.have.property('createdByYear').that.is.an('object');",
+                  "    pm.expect(body.createdByYear).to.not.be.an('array');",
+                  "    pm.expect(body).to.have.property('newest').that.is.an('array');",
+                  "    pm.expect(body).to.not.have.property('ok');",
+                  "    pm.expect(body).to.not.have.property('updatedAt');",
+                  "    pm.expect(body.newest.length).to.be.at.most(3);",
+                  "    if (body.schoolCount === 0) {",
+                  "      pm.expect(body.servingPercent).to.eql(0);",
+                  "    }",
+                  "    body.newest.forEach(function (school) {",
+                  "      pm.expect(school).to.have.property('id').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('name').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('slug');",
+                  "      pm.expect(school).to.have.property('email');",
+                  "      pm.expect(school.status).to.be.oneOf(['pending_setup', 'active', 'suspended']);",
+                  "      pm.expect(school.created).to.be.a('string');",
+                  "      pm.expect(school).to.not.have.property('founded');",
+                  "      pm.expect(school).to.not.have.property('username');",
+                  "      pm.expect(school).to.not.have.property('host');",
+                  "    });",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "    pm.expect(body.error).to.eql('Unauthorized');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('admin host required', function () {",
+                  "    pm.expect(body.error).to.eql('This action is only allowed on the admin host');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "d11d1001-0001-4000-8000-000000000200",
+              "name": "200 Populated counters",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schoolCount\": 2,\n  \"activeCount\": 1,\n  \"pendingSetupCount\": 1,\n  \"suspendedCount\": 0,\n  \"servingPercent\": 50,\n  \"createdByYear\": {\n    \"2026\": 2\n  },\n  \"newest\": [\n    {\n      \"id\": \"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee\",\n      \"name\": \"East Yard\",\n      \"slug\": null,\n      \"email\": \"head@east-yard.et\",\n      \"status\": \"pending_setup\",\n      \"created\": \"2026-09-06T12:00:00.000Z\"\n    },\n    {\n      \"id\": \"11111111-1111-4111-8111-111111111111\",\n      \"name\": \"North Hall\",\n      \"slug\": \"north-hall\",\n      \"email\": \"head@north-hall.et\",\n      \"status\": \"active\",\n      \"created\": \"2026-09-06T12:00:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000201",
+              "name": "200 Empty zeros",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schoolCount\": 0,\n  \"activeCount\": 0,\n  \"pendingSetupCount\": 0,\n  \"suspendedCount\": 0,\n  \"servingPercent\": 0,\n  \"createdByYear\": {},\n  \"newest\": []\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000202",
+              "name": "200 Mixed statuses rounded serving",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schoolCount\": 3,\n  \"activeCount\": 1,\n  \"pendingSetupCount\": 1,\n  \"suspendedCount\": 1,\n  \"servingPercent\": 33,\n  \"createdByYear\": {\n    \"2026\": 3\n  },\n  \"newest\": [\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111103\",\n      \"name\": \"School 3\",\n      \"slug\": null,\n      \"email\": null,\n      \"status\": \"pending_setup\",\n      \"created\": \"2026-09-03T10:00:00.000Z\"\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111102\",\n      \"name\": \"School 2\",\n      \"slug\": \"school-2\",\n      \"email\": null,\n      \"status\": \"suspended\",\n      \"created\": \"2026-09-02T10:00:00.000Z\"\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111101\",\n      \"name\": \"School 1\",\n      \"slug\": \"school-1\",\n      \"email\": null,\n      \"status\": \"active\",\n      \"created\": \"2026-09-01T10:00:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000203",
+              "name": "200 Newest capped at 3",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schoolCount\": 4,\n  \"activeCount\": 2,\n  \"pendingSetupCount\": 1,\n  \"suspendedCount\": 1,\n  \"servingPercent\": 50,\n  \"createdByYear\": {\n    \"2025\": 1,\n    \"2026\": 3\n  },\n  \"newest\": [\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111104\",\n      \"name\": \"School 4\",\n      \"slug\": \"school-4\",\n      \"email\": \"head@school-4.et\",\n      \"status\": \"active\",\n      \"created\": \"2026-04-01T00:00:00.000Z\"\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111103\",\n      \"name\": \"School 3\",\n      \"slug\": \"school-3\",\n      \"email\": \"head@school-3.et\",\n      \"status\": \"suspended\",\n      \"created\": \"2026-03-01T00:00:00.000Z\"\n    },\n    {\n      \"id\": \"11111111-1111-1111-1111-111111111102\",\n      \"name\": \"School 2\",\n      \"slug\": null,\n      \"email\": \"head@school-2.et\",\n      \"status\": \"pending_setup\",\n      \"created\": \"2026-02-01T00:00:00.000Z\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000412",
+              "name": "401 Missing bearer on school host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000413",
+              "name": "401 School HMAC token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000403",
+              "name": "403 School host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000423",
+              "name": "403 App host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000433",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This action is only allowed on the admin host\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            },
+            {
+              "id": "d11d1001-0001-4000-8000-000000000415",
+              "name": "405 POST on school host",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/dashboard",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "dashboard"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

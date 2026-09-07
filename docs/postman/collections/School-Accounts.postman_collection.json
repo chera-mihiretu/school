@@ -1,0 +1,3637 @@
+{
+  "info": {
+    "_postman_id": "a11a1003-4d7e-4b2a-9f11-6e0c1d8a4b03",
+    "name": "School API — School Accounts",
+    "description": "Director first-login on the **app host**. **Documented:** `GET|POST|DELETE /school-accounts/session`, `POST /school-accounts/password`, `GET|POST /school-accounts/username`.\n\nCampus routes live in `Campus-Session.postman_collection.json` — do not add them here.\n\n- Host: `{{appHost}}` or 403 `School accounts are only allowed on the app host`.\n- Auth: `{{schoolAccessToken}}` (HMAC `:school-account-session`). Sign-in writes `schoolAccessToken` and `schoolAccountId`.\n- Username lookup/claim stay on app host until the slug is claimed; then the app session dies (401).\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. Admin `{{accessToken}}` will not verify on school/campus routes (different HMAC material). School and campus share `:school-account-session`.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "School Accounts",
+      "description": "Director first-login on `app.<rootHost>` only (`{{appHost}}`). Identity is the pending tenant (`tenants` / `tenant_<slug>` after claim), not `platform.admins`.\n\n**Host:** `rejectIfNotAppHost` / `isAppHost` — `x-school-host` or `Host` must be `app.{{rootHost}}` (e.g. `app.e-school.et` or `app.e-school.et:3000`). Admin, campus, apex, or empty Host → `403 { \"error\": \"School accounts are only allowed on the app host\" }`.\n\nUnlike `/admin/session`, **GET and DELETE also enforce the app host.** School DELETE returns 403 on the wrong host (and when the account is suspended). Admin DELETE always returns 200.\n\nAfter the director claims a username, app-host session read returns **401** (not 403). Sign-in of a claimed account returns **403** `{ \"error\": \"Use your campus host\" }` — switch to the **Campus Session** collection (`Campus-Session.postman_collection.json`) with `{{schoolHost}}` and `{{campusAccessToken}}`.\n\n**Username (Batch 3):** `GET|POST /school-accounts/username` stay on `{{appHost}}` + `{{schoolAccessToken}}`. Calling them with `{{schoolHost}}` is **403** `School accounts are only allowed on the app host` (not the campus-host error). After a slug is claimed, GET/POST username on the old app token → **401** Unauthorized.",
+      "item": [
+        {
+          "name": "Read school account session",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{schoolAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{schoolAccessToken}}",
+                "description": "HMAC school session from POST /school-accounts/session (`payload.signature`, secret suffix `:school-account-session`). Missing, non-Bearer, expired, admin token, or claimed-slug account → 401."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{appHost}}",
+                "description": "**Required.** Must be `app.<rootHost>` after port strip. Unlike GET /admin/session, wrong host is 403."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-accounts/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-accounts",
+                "session"
+              ]
+            },
+            "description": "Returns the current director first-login session if the Bearer token is a valid school HMAC **and** the request is on the app host.\n\n**Auth:** required. `Authorization: Bearer {{schoolAccessToken}}`. `readBearerToken` only accepts a header that starts with `Bearer `.\n\n**Who:** a director in first-login (tenant has **no slug yet**). Platform admins cannot use `{{accessToken}}` here (different HMAC material). After username claim, this token is rejected (401) — use campus session on the school host.\n\n**Host (required):** `isAppHost`. `{{appHost}}` = `app.e-school.et:3000`. Admin / campus / apex → `403 { \"error\": \"School accounts are only allowed on the app host\" }`.\n\n**Side effects:** none. Does not rotate or extend the token.\n\n**Success `200`:** `{ accountId, email, expiresAt, mustChangePassword, nextStep }` — **no `token` field**. `nextStep` is `\"password\"` while `mustChangePassword` is true, otherwise `\"username\"`.\n\n**Errors that exist:** `401 { \"error\": \"Unauthorized\" }` (missing/empty/invalid/expired token, admin HMAC, unknown account, **or slug already claimed**); `403` wrong host or `\"This school account is suspended\"`; `405` for PUT/PATCH/etc.\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                  "  if (pm.response.code !== 401) { return; }",
+                  "  pm.expect(pm.response.json().error).to.eql('Unauthorized');",
+                  "});",
+                  "pm.test('wrong host or suspended is 403 with error string', function () {",
+                  "  if (pm.response.code !== 403) { return; }",
+                  "  pm.expect(pm.response.json().error).to.be.oneOf([",
+                  "    'School accounts are only allowed on the app host',",
+                  "    'This school account is suspended'",
+                  "  ]);",
+                  "});",
+                  "pm.test('success is 200 session view without token', function () {",
+                  "  if (pm.response.code !== 200) { return; }",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('accountId').that.is.a('string');",
+                  "  pm.expect(body).to.have.property('email').that.is.a('string');",
+                  "  pm.expect(body).to.have.property('expiresAt').that.is.a('string');",
+                  "  pm.expect(body).to.have.property('mustChangePassword').that.is.a('boolean');",
+                  "  pm.expect(body.nextStep).to.be.oneOf(['password', 'username']);",
+                  "  pm.expect(body).to.not.have.property('token');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "e55e5005-0005-4000-8000-000000000200",
+              "name": "200 Current session (must change password)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"accountId\": \"44444444-4444-4444-8444-444444444444\",\n  \"email\": \"head@north-hall.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\",\n  \"mustChangePassword\": true,\n  \"nextStep\": \"password\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000201",
+              "name": "200 Current session (next step username)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"accountId\": \"44444444-4444-4444-8444-444444444444\",\n  \"email\": \"head@north-hall.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\",\n  \"mustChangePassword\": false,\n  \"nextStep\": \"username\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000412",
+              "name": "401 Platform admin token rejected",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{accessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000413",
+              "name": "401 Username already claimed (use campus)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000403",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000423",
+              "name": "403 Campus host forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000433",
+              "name": "403 Account suspended",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+            },
+            {
+              "id": "e55e5005-0005-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Sign in school account",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body. Invalid JSON → 400. Empty body parses as `{}` and becomes 401 (empty credentials)."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{appHost}}",
+                "description": "Must resolve to `app.<rootHost>` after port strip. Admin / campus / apex → 403."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{schoolEmail}}\",\n  \"password\": \"{{schoolPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-accounts/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-accounts",
+                "session"
+              ]
+            },
+            "description": "Issues an HMAC school-account session when credentials match a tenant that has **not** claimed a slug **and** the request is on the app host.\n\n**Auth:** none on the request. Email is trimmed and lowercased (`normalizeTenantEmail`). Non-string or missing `email` / `password` become `\"\"` — there is **no field-level 400**. Bad, empty, or unknown credentials → `401 { \"error\": \"Invalid email or password\" }` (same message; no email-format errors on this route).\n\n**Who:** a director invited by platform admin, signing in on `app.<rootHost>` (`/first-login`). School accounts cannot sign in on `/admin/session`. After a slug is claimed, this route returns 403 — use campus sign-in.\n\n**Host (required):** `isAppHost` — `x-school-host` or `Host` must be `app.{{rootHost}}`. Otherwise `403 { \"error\": \"School accounts are only allowed on the app host\" }`.\n\n**Side effects:** issues a new HMAC token (`SESSION_TTL_SECONDS`, default 28800) signed with secret suffix `:school-account-session` (admin tokens will not verify). Best-effort `recordDirectorSignIn` (first successful app sign-in only; failure does not fail the request). Does **not** set cookies (the Next app stores the token after this call). Does not set `platform_admin_session`.\n\n**Success `200`:** `{ accountId, email, token, expiresAt, mustChangePassword, nextStep }`. First-login tenants have `mustChangePassword: true` and `nextStep: \"password\"`. After POST /school-accounts/password, sign-in returns `mustChangePassword: false` and `nextStep: \"username\"`. Copy `token` into `{{schoolAccessToken}}` (the test script does this).\n\n**Errors that exist:** 400 invalid JSON; 401 bad/empty/unknown credentials; 403 wrong host, suspended (`This school account is suspended`), or claimed slug (`Use your campus host`); 405 other methods.\n\n**Not used:** 404, 409, 422, and no distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('sign-in returns session plus token', function () {",
+                  "    pm.expect(body.accountId).to.be.a('string');",
+                  "    pm.expect(body.email).to.be.a('string');",
+                  "    pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.expiresAt).to.be.a('string');",
+                  "    pm.expect(body.mustChangePassword).to.be.a('boolean');",
+                  "    pm.expect(body.nextStep).to.be.oneOf(['password', 'username']);",
+                  "  });",
+                  "  pm.environment.set('schoolAccessToken', body.token);",
+                  "  pm.collectionVariables.set('schoolAccessToken', body.token);",
+                  "  if (typeof body.accountId === 'string' && body.accountId.length > 0) {",
+                  "    pm.environment.set('schoolAccountId', body.accountId);",
+                  "    pm.collectionVariables.set('schoolAccountId', body.accountId);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON error', function () {",
+                  "    pm.expect(body.error).to.eql('Invalid JSON');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('bad credentials error', function () {",
+                  "    pm.expect(body.error).to.eql('Invalid email or password');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('app host, suspended, or campus redirect', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'School accounts are only allowed on the app host',",
+                  "      'This school account is suspended',",
+                  "      'Use your campus host'",
+                  "    ]);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "f66f6006-0006-4000-8000-000000000200",
+              "name": "200 Signed in (must change password)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{schoolEmail}}\",\n  \"password\": \"{{schoolPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"accountId\": \"44444444-4444-4444-8444-444444444444\",\n  \"email\": \"head@north-hall.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\",\n  \"mustChangePassword\": true,\n  \"nextStep\": \"password\",\n  \"token\": \"eyJhY2NvdW50SWQiOiI0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQiLCJlbWFpbCI6ImhlYWRAbm9ydGgtaGFsbC5ldCIsImV4cCI6MTc4ODgwMDAwMH0.hmac-signature\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000201",
+              "name": "200 Signed in (next step username)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"head@north-hall.et\",\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"accountId\": \"44444444-4444-4444-8444-444444444444\",\n  \"email\": \"head@north-hall.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\",\n  \"mustChangePassword\": false,\n  \"nextStep\": \"username\",\n  \"token\": \"eyJhY2NvdW50SWQiOiI0NDQ0NDQ0NC00NDQ0LTQ0NDQtODQ0NC00NDQ0NDQ0NDQ0NDQiLCJlbWFpbCI6ImhlYWRAbm9ydGgtaGFsbC5ldCIsImV4cCI6MTc4ODgwMDAwMH0.hmac-signature\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ email: head@north-hall.et, password: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000401",
+              "name": "401 Invalid email or password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"head@north-hall.et\",\n  \"password\": \"wrong-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000402",
+              "name": "401 Missing credentials (empty strings)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000414",
+              "name": "401 Unknown email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"nobody@north-hall.et\",\n  \"password\": \"temporary-pass\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000403",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{schoolEmail}}\",\n  \"password\": \"{{schoolPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000413",
+              "name": "403 Campus host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{schoolEmail}}\",\n  \"password\": \"{{schoolPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000423",
+              "name": "403 Apex host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"{{schoolEmail}}\",\n  \"password\": \"{{schoolPassword}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000433",
+              "name": "403 Account suspended",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"paused@north-hall.et\",\n  \"password\": \"temporary-pass\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000443",
+              "name": "403 Use your campus host (slug claimed)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"claimed@north-hall.et\",\n  \"password\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Use your campus host\"\n}"
+            },
+            {
+              "id": "f66f6006-0006-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Sign out school account",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{schoolAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{schoolAccessToken}}",
+                "description": "The Next first-login app sends this. The handler reads the token only to detect **403** (wrong host or suspended). Missing or invalid tokens still return 200 when the host is the app host."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{appHost}}",
+                "description": "**Validated.** Wrong host → 403. This is unlike DELETE /admin/session, which never checks host."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/school-accounts/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-accounts",
+                "session"
+              ]
+            },
+            "description": "Client-side sign-out acknowledgement for the director first-login session.\n\n**Auth:** the handler **does** call `readSchoolAccountSession`, but only **403** results are forwarded. `401` (missing, invalid, expired, admin token, or claimed slug) is treated as success.\n\n**Who:** the Next first-login app calls this to drop its stored token. Anyone who can reach the backend on the **app host** can get 200; it is a no-op on the server when not 403.\n\n**Host (required):** `isAppHost`. Wrong host → `403 { \"error\": \"School accounts are only allowed on the app host\" }`. **Do not copy admin DELETE** (admin always 200).\n\n**Suspended:** if the token is valid enough to load the tenant and status is `suspended`, DELETE returns `403 { \"error\": \"This school account is suspended\" }` (same gate as GET).\n\n**Side effects:** **none on the server.** HMAC tokens stay valid until `expiresAt`. The client must discard `{{schoolAccessToken}}`. There is no deny-list.\n\n**Success:** `200 { \"ok\": true }` for DELETE when the read is ok **or** the error is 401.\n\n**Errors that exist:** `403` wrong host or suspended; `405` for methods other than GET/POST/DELETE.\n\n**Not used:** 400, 401 (swallowed), 404, 409, 422."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('sign-out is 200 { ok: true }', function () {",
+                  "    pm.expect(pm.response.json()).to.eql({ ok: true });",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('wrong host or suspended', function () {",
+                  "    pm.expect(pm.response.json().error).to.be.oneOf([",
+                  "      'School accounts are only allowed on the app host',",
+                  "      'This school account is suspended'",
+                  "    ]);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "a77a7007-0007-4000-8000-000000000200",
+              "name": "200 Signed out (token sent)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000201",
+              "name": "200 Signed out (no token — still succeeds)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000202",
+              "name": "200 Signed out (invalid token — still succeeds)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000403",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000413",
+              "name": "403 Campus host forbidden",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000433",
+              "name": "403 Account suspended",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+            },
+            {
+              "id": "a77a7007-0007-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Change school account password",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{schoolAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body. Invalid JSON → 400. Missing `currentPassword` / `newPassword` become `\"\"` (empty new password → 400 length rule)."
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{schoolAccessToken}}",
+                "description": "Required school HMAC from POST /school-accounts/session. Session is read **before** the body. Missing/invalid/claimed-slug → 401 Unauthorized."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{appHost}}",
+                "description": "**Required.** Must be `app.<rootHost>`. Wrong host → 403 before the password is checked."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{schoolPassword}}\",\n  \"newPassword\": \"a-kept-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/school-accounts/password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "school-accounts",
+                "password"
+              ]
+            },
+            "description": "Replaces the director temporary password and clears `mustChangePassword`.\n\n**Auth:** required. Handler calls `readSchoolAccountSession` first (same 401/403 rules as GET session), then `changeSchoolAccountPassword`.\n\n**Who:** a signed-in director on the app host whose tenant has **no slug**. After username claim, GET session (and therefore this route) returns 401.\n\n**Host (required):** app host on both the session read and the use case.\n\n**Side effects:** hashes `newPassword` and `updatePassword` with `mustChangePassword: false`. Does **not** issue a new token — the existing `{{schoolAccessToken}}` stays valid. Next GET session / this response has `nextStep: \"username\"`.\n\n**Body:** `{ currentPassword, newPassword }`. Non-strings become `\"\"`. Validation (`validateNewSchoolPassword`) runs **before** current-password verify:\n- `newPassword` shorter than **12** → `400 { \"error\": \"Password must be at least 12 characters\" }`\n- `newPassword === currentPassword` → `400 { \"error\": \"New password must be different from the current password\" }`\nWrong current password (after validation) → `401 { \"error\": \"Invalid email or password\" }`.\n\n**Success `200`:** `{ accountId, email, expiresAt, mustChangePassword: false, nextStep: \"username\" }` — **no `token` field**.\n\n**Errors that exist:** 400 invalid JSON or password rules; 401 Unauthorized (session) or Invalid email or password (current password); 403 wrong host or suspended; 405 for non-POST.\n\nThe use case can also return `403 { \"error\": \"Use your campus host\" }` if a slug appears after the session read (race). The typical HTTP path for an already-claimed account is **401** from the session gate.\n\n**Not used:** 404, 409, 422, and no distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('password change returns session view without token', function () {",
+                  "    pm.expect(body.accountId).to.be.a('string');",
+                  "    pm.expect(body.email).to.be.a('string');",
+                  "    pm.expect(body.expiresAt).to.be.a('string');",
+                  "    pm.expect(body.mustChangePassword).to.eql(false);",
+                  "    pm.expect(body.nextStep).to.eql('username');",
+                  "    pm.expect(body).to.not.have.property('token');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('validation or invalid JSON', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Invalid JSON',",
+                  "      'Password must be at least 12 characters',",
+                  "      'New password must be different from the current password'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 401) {",
+                  "  pm.test('session or current password', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Unauthorized',",
+                  "      'Invalid email or password'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 403) {",
+                  "  pm.test('app host, suspended, or campus', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'School accounts are only allowed on the app host',",
+                  "      'This school account is suspended',",
+                  "      'Use your campus host'",
+                  "    ]);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "b88b8008-0008-4000-8000-000000000200",
+              "name": "200 Password changed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"{{schoolPassword}}\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"accountId\": \"44444444-4444-4444-8444-444444444444\",\n  \"email\": \"head@north-hall.et\",\n  \"expiresAt\": \"2026-09-07T20:00:00.000Z\",\n  \"mustChangePassword\": false,\n  \"nextStep\": \"username\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ currentPassword: temporary-pass, newPassword: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000410",
+              "name": "400 Password too short",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"temporary-pass\",\n  \"newPassword\": \"short-pass\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Password must be at least 12 characters\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000420",
+              "name": "400 New password same as current",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"temporary-pass\",\n  \"newPassword\": \"temporary-pass\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"New password must be different from the current password\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000430",
+              "name": "400 Missing fields (empty new password)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Password must be at least 12 characters\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000401",
+              "name": "401 Missing bearer token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"temporary-pass\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000411",
+              "name": "401 Invalid or expired token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer not-a-valid-hmac-token"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"temporary-pass\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000421",
+              "name": "401 Wrong current password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"not-the-current\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid email or password\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000431",
+              "name": "401 Username already claimed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"a-kept-password\",\n  \"newPassword\": \"another-kept-pw\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Unauthorized\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000403",
+              "name": "403 Admin host forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"{{schoolPassword}}\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000433",
+              "name": "403 Account suspended",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"currentPassword\": \"temporary-pass\",\n  \"newPassword\": \"a-kept-password\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+            },
+            {
+              "id": "b88b8008-0008-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}"
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/password",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "password"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Username",
+          "description": "App-host first-login only (`{{appHost}}` + `{{schoolAccessToken}}`). Lookup is GET `?slug=`; claim is POST `{ slug }`. After claim, the app session dies (401) and the director signs in on `{{schoolHost}}`.",
+          "item": [
+            {
+              "name": "Lookup school username availability",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{schoolAccessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}",
+                    "description": "HMAC school session from POST /school-accounts/session (`payload.signature`, secret suffix `:school-account-session`). Missing, non-Bearer, expired, admin token, or claimed-slug account → 401."
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}",
+                    "description": "**Required.** Must be `app.<rootHost>` after port strip. Campus `{{schoolHost}}` is 403 with the **app-host** error — do not look up usernames on the campus host."
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "username"
+                  ],
+                  "query": [
+                    {
+                      "key": "slug",
+                      "value": "{{schoolUsername}}",
+                      "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                    }
+                  ]
+                },
+                "description": "Checks whether a school username (subdomain slug) is free. Same availability rules as `GET /admin/tenants/username`, but gated by a **school first-login session** on the **app host**.\n\n**Auth:** required. `Authorization: Bearer {{schoolAccessToken}}`. The handler calls `readSchoolAccountSession` first — same 401/403 gate as `GET /school-accounts/session`.\n\n**Who:** a director in first-login (tenant has **no slug yet**). Platform admin `{{accessToken}}` will not verify (different HMAC material). After the slug is claimed, this token is rejected (**401**, not 403).\n\n**Host (required):** `isAppHost`. `{{appHost}}` = `app.e-school.et:3000`. Admin / campus / apex → `403 { \"error\": \"School accounts are only allowed on the app host\" }`. Do **not** send `{{schoolHost}}`.\n\n**Query:** `slug` — trimmed and lowercased (`normalizeSchoolSlug`). Missing or non-string becomes `\"\"`. Invalid, reserved, and taken names still return **200** with `available: false` (no 400 on this GET).\n\n**Side effects:** none. Does not claim the slug.\n\n**Success `200` available:** `{ username, available: true }` (no `reason`).\n**Success `200` unavailable:** `{ username, available: false, reason }` where `reason` is `\"invalid\"` | `\"reserved\"` | `\"taken\"`.\n\n**Errors that exist:** `401 { \"error\": \"Unauthorized\" }` (missing/empty/invalid/expired token, admin HMAC, unknown account, **or slug already claimed**); `403` wrong host or `\"This school account is suspended\"`; `405` for PUT/PATCH/DELETE/etc.\n\n**Not used:** 400, 404 (path exists), 409, 422. No distinct 500 from this handler. Lookup-use-case 403s (`Unauthorized` / `Use your campus host`) are shadowed by the session gate (401 / 403) and are not returned as a separate HTTP shape."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('unauthenticated is 401 with Unauthorized', function () {",
+                      "  if (pm.response.code !== 401) { return; }",
+                      "  pm.expect(pm.response.json().error).to.eql('Unauthorized');",
+                      "});",
+                      "pm.test('wrong host or suspended is 403 with error string', function () {",
+                      "  if (pm.response.code !== 403) { return; }",
+                      "  pm.expect(pm.response.json().error).to.be.oneOf([",
+                      "    'School accounts are only allowed on the app host',",
+                      "    'This school account is suspended'",
+                      "  ]);",
+                      "});",
+                      "pm.test('success is 200 availability', function () {",
+                      "  if (pm.response.code !== 200) { return; }",
+                      "  const body = pm.response.json();",
+                      "  pm.expect(body).to.have.property('username').that.is.a('string');",
+                      "  pm.expect(body.available).to.be.a('boolean');",
+                      "  if (body.available === true) {",
+                      "    pm.expect(body).to.not.have.property('reason');",
+                      "  } else {",
+                      "    pm.expect(body.reason).to.be.oneOf(['invalid', 'reserved', 'taken']);",
+                      "  }",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "response": [
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000200",
+                  "name": "200 Available",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"username\": \"north-ridge\",\n  \"available\": true\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000201",
+                  "name": "200 Reserved",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug=app",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "app",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"username\": \"app\",\n  \"available\": false,\n  \"reason\": \"reserved\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000202",
+                  "name": "200 Taken",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug=claimed-hall",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "claimed-hall",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"username\": \"claimed-hall\",\n  \"available\": false,\n  \"reason\": \"taken\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000203",
+                  "name": "200 Invalid slug",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug=-nope-",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "-nope-",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"username\": \"-nope-\",\n  \"available\": false,\n  \"reason\": \"invalid\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000204",
+                  "name": "200 Missing slug (invalid)",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug=",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "",
+                          "description": "Omitted or empty → \"\". Still 200, not 400."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"username\": \"\",\n  \"available\": false,\n  \"reason\": \"invalid\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000401",
+                  "name": "401 Missing bearer token",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000411",
+                  "name": "401 Invalid or expired token",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer not-a-valid-hmac"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000412",
+                  "name": "401 Platform admin token rejected",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer eyJlbWFpbCI6InBsYXRmb3JtLmFkbWluQGUtc2Nob29sLmV0IiwiZXhwIjoxNzg4ODAwMDAwfQ.admin-hmac-signature"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000413",
+                  "name": "401 Username already claimed",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug=east-yard",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "east-yard",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000403",
+                  "name": "403 Admin host forbidden",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{adminHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000423",
+                  "name": "403 Campus host forbidden",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{schoolHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000433",
+                  "name": "403 Account suspended",
+                  "originalRequest": {
+                    "method": "GET",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username?slug={{schoolUsername}}",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ],
+                      "query": [
+                        {
+                          "key": "slug",
+                          "value": "{{schoolUsername}}",
+                          "description": "Candidate username. Trimmed and lowercased. Missing param becomes \"\"."
+                        }
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+                },
+                {
+                  "id": "c11c1001-0001-4000-8000-000000000405",
+                  "name": "405 Method not allowed",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Method Not Allowed",
+                  "code": 405,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Method not allowed\"\n}"
+                }
+              ]
+            },
+            {
+              "name": "Claim school username",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{schoolAccessToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "description": "JSON body. Invalid JSON → 400. Empty body parses as `{}` and `slug` becomes `\"\"` → 400 \"A subdomain slug is required\". Non-string `slug` also becomes `\"\"`."
+                  },
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{schoolAccessToken}}",
+                    "description": "HMAC school session. Same gate as GET /school-accounts/session. After claim, this token is 401."
+                  },
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}",
+                    "description": "**Required.** App host only. Campus `{{schoolHost}}` → 403 app-host error. Claim on campus host is not supported."
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/school-accounts/username",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "school-accounts",
+                    "username"
+                  ]
+                },
+                "description": "Claims a unique school username (subdomain slug), activates the tenant, and names `tenant_<slug>` (hyphens become underscores).\n\n**Auth:** required. `Authorization: Bearer {{schoolAccessToken}}`. Session is read **before** the body is applied — claimed-slug tokens die here with **401** (HTTP test: second claim is 401, not 409).\n\n**Who:** a director who has **already changed the temporary password** (`mustChangePassword: false`, `nextStep: \"username\"`). Claiming before password change → `409 { \"error\": \"Change your password first\" }`.\n\n**Host (required):** `{{appHost}}` only. Admin / campus / apex → `403 { \"error\": \"School accounts are only allowed on the app host\" }`.\n\n**Body:** `{ slug }`. Trimmed and lowercased. Missing/non-string becomes empty string (no field-level 400 except the slug validators below).\n\n**Side effects:** `store.claimSlug` — sets `slug`, status `active`, and the tenant schema name. After success, app-host session/password/username routes reject this token (401). Sign in next on `{{schoolHost}}` via `POST /school-accounts/campus-session`.\n\n**Success `200`:** `{ host, slug }` — `host` is `{slug}.{rootHost}` **without port** (e.g. `north-ridge.e-school.et`). **No token.**\n\n**Slug 400s (after a valid session):** empty → `A subdomain slug is required`; invalid pattern → `Invalid slug: use lowercase letters, numbers and single hyphens, starting and ending with a letter or number`; reserved (`www`, `api`, `app`, `admin`, `mail`, `ftp`) → `\"<slug>\" is reserved by the platform`.\n\n**Errors that exist:** 400 invalid JSON or slug validation; 401 session gate (including already-claimed token); 403 wrong host or suspended; 409 password-not-changed, `\"<slug>\" is already taken`, or `This school already has a username` (use-case / concurrent claim — sequential second claim via HTTP is 401 because the session dies first); 405 other methods.\n\n**Not used:** 404, 422. No distinct 500 from this handler."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const body = pm.response.json();",
+                      "if (pm.response.code === 200) {",
+                      "  pm.test('claim returns host and slug without token', function () {",
+                      "    pm.expect(body.host).to.be.a('string').and.not.empty;",
+                      "    pm.expect(body.slug).to.be.a('string').and.not.empty;",
+                      "    pm.expect(body).to.not.have.property('token');",
+                      "  });",
+                      "}",
+                      "if (pm.response.code === 400) {",
+                      "  pm.test('invalid JSON or slug validation', function () {",
+                      "    pm.expect(body.error).to.be.a('string').and.not.empty;",
+                      "  });",
+                      "}",
+                      "if (pm.response.code === 401) {",
+                      "  pm.test('session rejected', function () {",
+                      "    pm.expect(body.error).to.eql('Unauthorized');",
+                      "  });",
+                      "}",
+                      "if (pm.response.code === 403) {",
+                      "  pm.test('wrong host or suspended', function () {",
+                      "    pm.expect(body.error).to.be.oneOf([",
+                      "      'School accounts are only allowed on the app host',",
+                      "      'This school account is suspended'",
+                      "    ]);",
+                      "  });",
+                      "}",
+                      "if (pm.response.code === 409) {",
+                      "  pm.test('password gate, taken, or already claimed', function () {",
+                      "    pm.expect(body.error).to.be.a('string').and.not.empty;",
+                      "  });",
+                      "}"
+                    ]
+                  }
+                }
+              ],
+              "response": [
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000200",
+                  "name": "200 Username claimed",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"host\": \"north-ridge.e-school.et\",\n  \"slug\": \"north-ridge\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000400",
+                  "name": "400 Invalid JSON",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{ slug: north-ridge ",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000410",
+                  "name": "400 Missing slug (empty)",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"A subdomain slug is required\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000411",
+                  "name": "400 Invalid slug",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"-nope-\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Invalid slug: use lowercase letters, numbers and single hyphens, starting and ending with a letter or number\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000412",
+                  "name": "400 Reserved slug",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"app\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"\\\"app\\\" is reserved by the platform\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000401",
+                  "name": "401 Missing bearer token",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000413",
+                  "name": "401 Invalid or expired token",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer not-a-valid-hmac"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000414",
+                  "name": "401 Username already claimed",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"other-hall\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Unauthorized\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000403",
+                  "name": "403 Admin host forbidden",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{adminHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000423",
+                  "name": "403 Campus host forbidden",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{schoolHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"School accounts are only allowed on the app host\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000433",
+                  "name": "403 Account suspended",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"{{schoolUsername}}\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"This school account is suspended\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000409",
+                  "name": "409 Change password first",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"claim-gate\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Change your password first\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000419",
+                  "name": "409 Slug already taken",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"east-yard\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"\\\"east-yard\\\" is already taken\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000429",
+                  "name": "409 Already has a username",
+                  "originalRequest": {
+                    "method": "POST",
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"slug\": \"other-hall\"\n}",
+                      "options": {
+                        "raw": {
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"This school already has a username\"\n}"
+                },
+                {
+                  "id": "c22c2002-0002-4000-8000-000000000405",
+                  "name": "405 Method not allowed",
+                  "originalRequest": {
+                    "method": "PUT",
+                    "header": [
+                      {
+                        "key": "Authorization",
+                        "value": "Bearer {{schoolAccessToken}}"
+                      },
+                      {
+                        "key": "x-school-host",
+                        "value": "{{appHost}}"
+                      }
+                    ],
+                    "url": {
+                      "raw": "{{baseUrl}}/school-accounts/username",
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "path": [
+                        "school-accounts",
+                        "username"
+                      ]
+                    }
+                  },
+                  "status": "Method Not Allowed",
+                  "code": 405,
+                  "_postman_previewlanguage": "json",
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json; charset=utf-8"
+                    }
+                  ],
+                  "cookie": [],
+                  "body": "{\n  \"error\": \"Method not allowed\"\n}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1307 @@
+{
+  "info": {
+    "_postman_id": "a11a1005-4d7e-4b2a-9f11-6e0c1d8a4b05",
+    "name": "School API — Public",
+    "description": "Unauthenticated marketing / resolve / contact routes. **Documented:** `GET /public/featured-schools`, `GET /public/resolve`, `POST /public/contact`.\n\n- Featured schools: **no host check**, no auth. Published rows only. Drafts are omitted.\n- Resolve: uses `x-school-host` (then `Host`). Always **200** with a `kind`. Unknown / pending_setup / reserved slugs are `kind: \"unknown\"`, not 404.\n- Contact: unauthenticated POST. Success is **201** `{ \"ok\": true }`. Missing JSON fields become `\"\"`, not 400-for-missing-key. Validation errors are 400 with a string `error`.\n\nShared environment: `environments/School-API.local.postman_environment.json`.\n\n- `{{baseUrl}}` is the **backend** (`http://127.0.0.1:5000`), not Next on `3000`.\n- Prefer `x-school-host` over `Host`. Matching lowercases and strips `:{port}`.\n- Tokens are HMAC (`payload.signature`), not JWT. These three routes do not require a token.\n- Error JSON (except health): `{ \"error\": \"<string>\" }`. No 422. Wrapper-only 500 is `{ \"error\": \"Internal server error\" }`.\n- Do not invent routes or status codes. Later batches land in the matching collection file — do not grow a monolith.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Public",
+      "description": "Guest routes. Featured-schools ignores host. Resolve **uses** `x-school-host`. Contact is unauthenticated POST → 201 `{ ok: true }`. Reuse `{{apexHost}}`, `{{schoolHost}}`, `{{schoolUsername}}`, `{{featuredSchoolId}}`.",
+      "item": [
+        {
+          "name": "List public featured schools",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-school-host",
+                "value": "{{apexHost}}",
+                "disabled": true,
+                "description": "Optional and ignored. This handler does not read the host. Enable only to confirm the list is unchanged."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/public/featured-schools",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "public",
+                "featured-schools"
+              ]
+            },
+            "description": "Returns **published** featured schools for the marketing site. Drafts (`published: false`) are omitted.\n\n**Auth:** none. A Bearer token is ignored if sent.\n\n**Host:** none. `handlePublicFeaturedSchools` does not read `x-school-host` or `Host`. App / admin / campus / missing header all return the same list.\n\n**Side effects:** none.\n\n**Success `200`:** `{ \"schools\": [ { id, name, slug, created, host } ] }`. `created` is ISO-8601 from `createdAt`. `host` is `{slug}.{rootHost}` with **no port**. Order is `sort_order` ascending, then `created_at` ascending (`listPublished`). An empty directory is `{ \"schools\": [] }` — still 200. Admin-only fields `published` and `sort_order` are **not** included.\n\n**Errors that exist:** 405 for methods other than GET.\n\n**Not used:** 400, 401, 403, 404, 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('public featured list is { schools: array }', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('schools').that.is.an('array');",
+                  "    body.schools.forEach(function (school) {",
+                  "      pm.expect(school).to.have.property('id').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('name').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('slug').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('created').that.is.a('string');",
+                  "      pm.expect(school).to.have.property('host').that.is.a('string');",
+                  "      pm.expect(school).to.not.have.property('published');",
+                  "      pm.expect(school).to.not.have.property('sort_order');",
+                  "    });",
+                  "  });",
+                  "  const first = pm.response.json().schools[0];",
+                  "  if (first && typeof first.id === 'string' && first.id.length > 0) {",
+                  "    pm.environment.set('featuredSchoolId', first.id);",
+                  "    pm.collectionVariables.set('featuredSchoolId', first.id);",
+                  "  }",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "p11f1001-0001-4000-8000-000000000200",
+              "name": "200 Published schools",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/public/featured-schools",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "featured-schools"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [\n    {\n      \"id\": \"11111111-1111-4111-8111-111111111111\",\n      \"name\": \"North Hall\",\n      \"slug\": \"north-hall\",\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"host\": \"north-hall.e-school.et\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "p11f1001-0001-4000-8000-000000000201",
+              "name": "200 Empty list",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/public/featured-schools",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "featured-schools"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": []\n}"
+            },
+            {
+              "id": "p11f1001-0001-4000-8000-000000000202",
+              "name": "200 Host header ignored",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/featured-schools",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "featured-schools"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"schools\": [\n    {\n      \"id\": \"11111111-1111-4111-8111-111111111111\",\n      \"name\": \"North Hall\",\n      \"slug\": \"north-hall\",\n      \"created\": \"2026-09-01T10:00:00.000Z\",\n      \"host\": \"north-hall.e-school.et\"\n    }\n  ]\n}"
+            },
+            {
+              "id": "p11f1001-0001-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/public/featured-schools",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "featured-schools"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Resolve public host",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-school-host",
+                "value": "{{apexHost}}",
+                "description": "Preferred over `Host`. Port is stripped and the value is lowercased. Missing `x-school-host` falls back to the HTTP `Host` (often `127.0.0.1:5000` when hitting `{{baseUrl}}`), which does not end with `{{rootHost}}` and therefore resolves as `kind: \"apex\"`."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/public/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "public",
+                "resolve"
+              ]
+            },
+            "description": "Classifies the caller’s host for the Next public app. Always **200** — there is no 404 for an unknown slug.\n\n**Auth:** none.\n\n**Host (used, not gated):** `readHostHeader` — `x-school-host` if non-empty, else `Host`, else `\"\"`. `stripHostPort` lowercases and drops `:{port}`.\n\n**Kinds** (`PublicHostView`):\n- `apex` — host is `{{rootHost}}`, `www.{{rootHost}}`, or **does not end with** `.{rootHost}` (including `127.0.0.1` when the header is missing).\n- `admin` — `admin.{{rootHost}}` (`isPlatformAdminHost`). Checked before reserved-slug unknown.\n- `app` — `app.{{rootHost}}` (`isAppHost`). Checked before reserved-slug unknown; a tenant named `app` is still `kind: \"app\"`.\n- `campus` — first label is a non-reserved slug **and** `tenants.findBySlug` returns `status: \"active\"`. Extra fields: `name`, `slug`, `founded`, `monogram` (first letters of the first two name words).\n- `suspended` — same lookup, `status: \"suspended\"`. Typed fields: `name`, `slug`, `monogram`. The handler spreads the same object as campus, so the JSON also includes `founded`.\n- `unknown` — reserved labels (`www` as a non-apex path is actually apex; `api` `mail` `ftp`), empty/multi-dot labels, slug not in the directory, or tenant `pending_setup`. **No** name/slug/founded/monogram.\n\n**Side effects:** none.\n\n**Success `200`:** one of the kind objects above. `host` has no port. `rootHost` is the configured root (lowercased).\n\n**Errors that exist:** 405 for methods other than GET.\n\n**Not used:** 400, 401, 403, 404, 409, 422. Unknown hosts are 200 `kind: \"unknown\"` or `kind: \"apex\"`, not 404."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('resolve returns a known kind', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body.kind).to.be.oneOf([",
+                  "      'apex', 'admin', 'app', 'campus', 'suspended', 'unknown'",
+                  "    ]);",
+                  "    pm.expect(body.host).to.be.a('string');",
+                  "    pm.expect(body.rootHost).to.be.a('string');",
+                  "    if (body.kind === 'campus' || body.kind === 'suspended') {",
+                  "      pm.expect(body.name).to.be.a('string');",
+                  "      pm.expect(body.slug).to.be.a('string');",
+                  "      pm.expect(body.monogram).to.be.a('string');",
+                  "    }",
+                  "    if (body.kind === 'campus') {",
+                  "      pm.expect(body.founded).to.be.a('string');",
+                  "    }",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(pm.response.json().error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "p22r2002-0002-4000-8000-000000000210",
+              "name": "200 Apex (root host)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"apex\",\n  \"host\": \"e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000211",
+              "name": "200 Admin host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{adminHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"admin\",\n  \"host\": \"admin.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000212",
+              "name": "200 App host",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{appHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"app\",\n  \"host\": \"app.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000213",
+              "name": "200 Active campus",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{schoolHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"campus\",\n  \"host\": \"north-ridge.e-school.et\",\n  \"rootHost\": \"e-school.et\",\n  \"name\": \"North Hall\",\n  \"slug\": \"north-ridge\",\n  \"founded\": \"Founded 2026\",\n  \"monogram\": \"NH\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000214",
+              "name": "200 Suspended campus",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "river-oak.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"suspended\",\n  \"host\": \"river-oak.e-school.et\",\n  \"rootHost\": \"e-school.et\",\n  \"name\": \"River Oak Day School\",\n  \"slug\": \"river-oak\",\n  \"founded\": \"Founded 1974\",\n  \"monogram\": \"RO\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000215",
+              "name": "200 Unknown slug",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "maple-ridge.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"unknown\",\n  \"host\": \"maple-ridge.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000218",
+              "name": "200 Pending-setup tenant is unknown",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "waiting.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"unknown\",\n  \"host\": \"waiting.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000216",
+              "name": "200 Reserved slug is unknown",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "mail.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"unknown\",\n  \"host\": \"mail.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000217",
+              "name": "200 www is apex",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "www.e-school.et:3000"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"apex\",\n  \"host\": \"www.e-school.et\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000219",
+              "name": "200 Missing x-school-host (Host fallback → apex)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"kind\": \"apex\",\n  \"host\": \"127.0.0.1\",\n  \"rootHost\": \"e-school.et\"\n}"
+            },
+            {
+              "id": "p22r2002-0002-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "x-school-host",
+                    "value": "{{apexHost}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/resolve",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "resolve"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Submit contact message",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "description": "JSON body. Invalid JSON → 400 `{ \"error\": \"Invalid JSON\" }`. Empty body parses as `{}` and missing fields become `\"\"` (first failure: `School name is required`)."
+              },
+              {
+                "key": "x-school-host",
+                "value": "{{apexHost}}",
+                "disabled": true,
+                "description": "Optional and ignored. Contact does not call readHostHeader."
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada Lemma\",\n  \"role\": \"Director\",\n  \"email\": \"ada@north-hall.edu\",\n  \"note\": \"We would like a campus.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/public/contact",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "public",
+                "contact"
+              ]
+            },
+            "description": "Accepts a public contact-form post. **No auth. No host check.** Success is **201** `{ \"ok\": true }` (not 200). The created id is not returned — look it up later via `GET /admin/contact-messages`.\n\n**Auth:** none. A Bearer token is ignored if sent.\n\n**Host:** none. `handlePublicContact` does not call `readHostHeader`.\n\n**Body fields** (non-string or missing → `\"\"` except optional `role` / `note`):\n- `school` (required) — trimmed. Empty → `School name is required`. Over 200 → `School name is too long`.\n- `name` (required) — trimmed. Empty → `Name is required`. Over 200 → `Name is too long`.\n- `email` (required) — trimmed and lowercased. Empty → `Email is required`. Must match `/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/` or `A valid email is required`.\n- `role` (optional) — if the key is absent, stored as `null`. Blank/whitespace → `null`. Over 200 → `Role is too long`.\n- `note` (optional) — if the key is absent, stored as `\"\"`. Trimmed. Over 4000 → `Note is too long`. Empty note is allowed.\n\nValidation order: school → name → email → role → note. Only the first failure is returned.\n\n**Side effects:** inserts a row (`phone` is always `null`). Does not send email.\n\n**Success `201`:** `{ \"ok\": true }`.\n\n**Errors that exist:** 400 `Invalid JSON`; 400 field errors above; 405 for methods other than POST.\n\n**Not used:** 401, 403, 404, 409, 422. No distinct 500 from this handler."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 201) {",
+                  "  pm.test('contact accepted is 201 { ok: true }', function () {",
+                  "    pm.expect(body).to.eql({ ok: true });",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 400) {",
+                  "  pm.test('invalid JSON or field error', function () {",
+                  "    pm.expect(body.error).to.be.oneOf([",
+                  "      'Invalid JSON',",
+                  "      'School name is required',",
+                  "      'School name is too long',",
+                  "      'Name is required',",
+                  "      'Name is too long',",
+                  "      'Email is required',",
+                  "      'A valid email is required',",
+                  "      'Role is too long',",
+                  "      'Note is too long'",
+                  "    ]);",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 405) {",
+                  "  pm.test('method not allowed', function () {",
+                  "    pm.expect(body.error).to.eql('Method not allowed');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "id": "p33c3003-0003-4000-8000-000000000201",
+              "name": "201 Submitted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada Lemma\",\n  \"role\": \"Director\",\n  \"email\": \"ada@north-hall.edu\",\n  \"note\": \"We would like a campus.\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000202",
+              "name": "201 Optional role and note omitted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"East Yard\",\n  \"name\": \"Bereket\",\n  \"email\": \"bereket@east.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000203",
+              "name": "201 Blank role stored as null",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada\",\n  \"role\": \"  \",\n  \"email\": \"ada@school.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"ok\": true\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000400",
+              "name": "400 Invalid JSON",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{ school: North Hall, name: ",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Invalid JSON\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000410",
+              "name": "400 Empty object (fields become empty strings)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School name is required\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000401",
+              "name": "400 School name is required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Ada\",\n  \"email\": \"ada@school.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School name is required\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000402",
+              "name": "400 Name is required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"email\": \"ada@school.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Name is required\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000403",
+              "name": "400 Email is required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Email is required\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000404",
+              "name": "400 A valid email is required",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada\",\n  \"email\": \"not-an-email\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"A valid email is required\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000406",
+              "name": "400 School name is too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n  \"name\": \"Ada\",\n  \"email\": \"ada@school.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"School name is too long\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000407",
+              "name": "400 Name is too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n  \"email\": \"ada@school.et\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Name is too long\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000408",
+              "name": "400 Role is too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada\",\n  \"email\": \"ada@school.et\",\n  \"role\": \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Role is too long\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000409",
+              "name": "400 Note is too long",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"school\": \"North Hall\",\n  \"name\": \"Ada\",\n  \"email\": \"ada@school.et\",\n  \"note\": \"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Note is too long\"\n}"
+            },
+            {
+              "id": "p33c3003-0003-4000-8000-000000000405",
+              "name": "405 Method not allowed",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/public/contact",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "public",
+                    "contact"
+                  ]
+                }
+              },
+              "status": "Method Not Allowed",
+              "code": 405,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"error\": \"Method not allowed\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
