@@ -1,0 +1,118 @@
+name: school
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: postgres-service
+    init: true
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: school
+      POSTGRES_PASSWORD: school
+      POSTGRES_DB: school
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - school
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U school -d school"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        tag: postgres-service
+        max-size: "10m"
+        max-file: "5"
+
+  dns:
+    image: coredns/coredns:1.11.4
+    container_name: dns-service
+    restart: unless-stopped
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./dns/Corefile:/etc/coredns/Corefile:ro
+    ports:
+      - "127.0.0.1:53:1053/udp"
+      - "127.0.0.1:53:1053/tcp"
+    networks:
+      - school
+    logging:
+      driver: json-file
+      options:
+        tag: dns-service
+        max-size: "10m"
+        max-file: "5"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: school-frontend:local
+    container_name: frontend-service
+    init: true
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./frontend/.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      SERVICE_TAG: frontend-service
+    labels:
+      com.school.log.tag: frontend-service
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - school
+    logging:
+      driver: json-file
+      options:
+        tag: frontend-service
+        max-size: "10m"
+        max-file: "5"
+        labels: com.school.log.tag
+        env: SERVICE_TAG
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: school-backend:local
+    container_name: backend-service
+    init: true
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      SERVICE_TAG: backend-service
+    labels:
+      com.school.log.tag: backend-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - school
+    logging:
+      driver: json-file
+      options:
+        tag: backend-service
+        max-size: "10m"
+        max-file: "5"
+        labels: com.school.log.tag
+        env: SERVICE_TAG
+
+networks:
+  school:
+    driver: bridge
+
+volumes:
+  postgres_data:
