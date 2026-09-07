@@ -1,0 +1,15 @@
+{
+  "name": "School",
+  "short_name": "School",
+  "description": "One platform, many independent schools.",
+  "icons": [
+    {
+      "src": "/logo/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "display": "standalone",
+  "background_color": "#13161d",
+  "theme_color": "#13161d"
+}

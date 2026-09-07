@@ -1,0 +1,30 @@
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "node --test --experimental-strip-types src/lib/host.test.ts src/lib/network.test.ts src/lib/public-url.test.ts src/features/school-account/constants.test.ts src/features/school-account/school-account.test.ts src/features/school-account/school-abbreviation.test.ts src/features/school-account/campus-director-nav.test.ts src/features/school-teachers/school-teachers.test.ts src/features/school-staff/school-staff.test.ts src/features/platform-admin/tenants.test.ts src/features/platform-admin/dashboard.test.ts src/stores/resend-pending.test.ts src/stores/create-school-store.test.ts src/stores/schools-list-store.test.ts src/stores/teachers-store.test.ts src/stores/staff-store.test.ts src/stores/campus-dashboard-store.test.ts"
+  },
+  "dependencies": {
+    "next": "16.3.4",
+    "pino": "^10.3.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

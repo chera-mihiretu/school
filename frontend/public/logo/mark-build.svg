@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="School network mark">
+  <style>
+    .hub {
+      transform-origin: 16px 16px;
+      animation: school-mark-hub 0.24s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+    }
+    .r0, .r1, .r2, .r3 {
+      stroke-dasharray: 4.8;
+      stroke-dashoffset: 4.8;
+      animation: school-mark-rule 0.26s ease forwards;
+    }
+    .r0 { animation-delay: 0.2s; }
+    .r1 { animation-delay: 0.3s; }
+    .r2 { animation-delay: 0.4s; }
+    .r3 { animation-delay: 0.5s; }
+    .n0, .n1, .n2, .n3 {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: school-mark-node 0.22s cubic-bezier(0.2, 0.75, 0.2, 1) both;
+    }
+    .n0 { animation-delay: 0.7s; }
+    .n1 { animation-delay: 0.86s; }
+    .n2 { animation-delay: 1.02s; }
+    .n3 { animation-delay: 1.18s; }
+    @keyframes school-mark-hub {
+      from { transform: scale(0); }
+      to { transform: scale(1); }
+    }
+    @keyframes school-mark-rule {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes school-mark-node {
+      from { transform: scale(0); }
+      to { transform: scale(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .hub, .r0, .r1, .r2, .r3, .n0, .n1, .n2, .n3 {
+        animation: none;
+        stroke-dashoffset: 0;
+      }
+    }
+  </style>
+  <line x1="16" y1="12.4" x2="16" y2="7.6" stroke="currentColor" stroke-width="2.2" class="r0" />
+  <line x1="19.6" y1="16" x2="24.4" y2="16" stroke="currentColor" stroke-width="2.2" class="r1" />
+  <line x1="16" y1="19.6" x2="16" y2="24.4" stroke="currentColor" stroke-width="2.2" class="r2" />
+  <line x1="12.4" y1="16" x2="7.6" y2="16" stroke="currentColor" stroke-width="2.2" class="r3" />
+  <rect x="12.4" y="12.4" width="7.2" height="7.2" rx="1.6" fill="currentColor" class="hub" />
+  <rect x="13.4" y="2.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" class="n0" />
+  <rect x="24.4" y="13.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" class="n1" />
+  <rect x="13.4" y="24.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" class="n2" />
+  <rect x="2.4" y="13.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" class="n3" />
+</svg>
